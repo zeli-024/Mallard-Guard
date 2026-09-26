@@ -5,11 +5,16 @@ import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.GuardPackets;
 import dev.zeli.mallardguard.MallardGuard;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.AttackIndicatorStatus;
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
+import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -27,6 +32,7 @@ public final class GuardClient {
     private static int hitResult;
     private static int resultTicks;
     private static final int RESULT_DURATION = 18;
+    private static AttackIndicatorStatus savedAttackIndicator;
 
     private GuardClient() {}
 
@@ -61,6 +67,7 @@ public final class GuardClient {
     public static void tick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.getConnection() == null) {
+            restoreAttackIndicator();
             wasDown = false;
             phase = recharge = 0;
             hitResult = resultTicks = 0;
@@ -74,31 +81,73 @@ public final class GuardClient {
         }
     }
 
+    // The attack indicator shares vanilla's crosshair/hotbar layers. Hide it only
+    // while each layer renders, then restore the player's option immediately.
+    @SubscribeEvent
+    public static void beforeLayer(RenderGuiLayerEvent.Pre event) {
+        if (savedAttackIndicator != null) restoreAttackIndicator();
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get() || (phase == 0 && recharge == 0)) return;
+        if (event.getName().equals(VanillaGuiLayers.CROSSHAIR) || event.getName().equals(VanillaGuiLayers.HOTBAR)) {
+            savedAttackIndicator = mc.options.attackIndicator().get();
+            mc.options.attackIndicator().set(AttackIndicatorStatus.OFF);
+        }
+    }
+
+    @SubscribeEvent
+    public static void afterLayer(RenderGuiLayerEvent.Post event) {
+        if (event.getName().equals(VanillaGuiLayers.CROSSHAIR) || event.getName().equals(VanillaGuiLayers.HOTBAR)) restoreAttackIndicator();
+    }
+
+    private static void restoreAttackIndicator() {
+        if (savedAttackIndicator != null) {
+            Minecraft.getInstance().options.attackIndicator().set(savedAttackIndicator);
+            savedAttackIndicator = null;
+        }
+    }
+
     @SubscribeEvent
     public static void render(RenderGuiEvent.Post event) {
+        restoreAttackIndicator();
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.options.hideGui) return;
+        int crosshairX = (event.getGuiGraphics().guiWidth() - 15) / 2;
+        int crosshairY = (event.getGuiGraphics().guiHeight() - 15) / 2;
+        int shieldX = crosshairX + (15 - 8) / 2;
+        int shieldY = crosshairY + 15 + 2;
         if (GuardConfig.RESULT_TEXT.get() && resultTicks > 0) {
-            String message = switch (hitResult) {
-                case 1 -> "PARRY";
-                case 2 -> "PERFECT PARRY";
-                case 3 -> "BLOCK";
-                default -> "";
+            Component message = switch (hitResult) {
+                case 1 -> Component.literal("PARRY");
+                case 2 -> Component.literal("PERFECT PARRY").withStyle(ChatFormatting.BOLD, ChatFormatting.ITALIC);
+                case 3 -> Component.literal("BLOCK");
+                default -> Component.empty();
             };
             int rgb = switch (hitResult) {
-                case 2 -> 0xEFD99C;
-                case 3 -> 0xBACAD0;
-                default -> 0xBCE2C7;
+                case 2 -> 0xFFD700;
+                case 3 -> 0xD5D8DC;
+                default -> 0xFFFFFF;
             };
-            int alpha = Math.min(255, resultTicks * 255 / 7);
-            int y = event.getGuiGraphics().guiHeight() / 2 - 31 - (RESULT_DURATION - resultTicks) / 4;
-            event.getGuiGraphics().drawCenteredString(mc.font, message, event.getGuiGraphics().guiWidth() / 2, y, (alpha << 24) | rgb);
+            int alpha = resultTicks >= 5 ? 255 : Math.max(0, resultTicks * 255 / 5);
+            int glowAlpha = Math.min(100, alpha / 2);
+            int x = crosshairX + 7;
+            int y = shieldY + 11;
+            event.getGuiGraphics().pose().pushPose();
+            event.getGuiGraphics().pose().translate(x, y, 0);
+            event.getGuiGraphics().pose().scale(0.65F, 0.65F, 1.0F);
+            int center = 0;
+            int glow = (glowAlpha << 24) | rgb;
+            event.getGuiGraphics().drawCenteredString(mc.font, message, center - 2, 0, glow);
+            event.getGuiGraphics().drawCenteredString(mc.font, message, center + 2, 0, glow);
+            event.getGuiGraphics().drawCenteredString(mc.font, message, center, -2, glow);
+            event.getGuiGraphics().drawCenteredString(mc.font, message, center, 2, glow);
+            event.getGuiGraphics().drawCenteredString(mc.font, message, center, 0, (alpha << 24) | rgb);
+            event.getGuiGraphics().pose().popPose();
         }
         if (!GuardConfig.HUD.get()) return;
         if (phase == 0 && recharge == 0) return;
         boolean draining = phase == 1 || phase == 2;
-        int x = event.getGuiGraphics().guiWidth() / 2 - 4;
-        int y = event.getGuiGraphics().guiHeight() / 2 + 12;
+        int x = shieldX;
+        int y = shieldY;
         event.getGuiGraphics().pose().pushPose();
         event.getGuiGraphics().pose().translate(x, y, 0);
         event.getGuiGraphics().pose().scale(0.25f, 0.25f, 1f);
