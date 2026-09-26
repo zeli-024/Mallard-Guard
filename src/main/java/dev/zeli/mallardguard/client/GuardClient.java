@@ -77,7 +77,8 @@ public final class GuardClient {
         } else if (phase != 3) {
             int filled = Math.min(32, Math.max(0, Math.round(32f * (1f - (float) recharge / Math.max(1, rechargeMax)))));
             if (filled > 0) {
-                event.getGuiGraphics().blit(ANIMATED, 0, 0, 0, 0, filled, 32, 32, 32);
+                int start = 32 - filled;
+                event.getGuiGraphics().blit(ANIMATED, start, 0, start, 0, filled, 32, 32, 32);
             }
         }
         RenderSystem.disableBlend();
