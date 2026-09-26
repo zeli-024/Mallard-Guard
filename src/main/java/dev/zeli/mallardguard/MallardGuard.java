@@ -22,6 +22,7 @@ public final class MallardGuard {
     public MallardGuard(IEventBus modBus, ModContainer container) {
         container.registerConfig(ModConfig.Type.SERVER, GuardConfig.SERVER_SPEC);
         container.registerConfig(ModConfig.Type.CLIENT, GuardConfig.CLIENT_SPEC);
+        GuardSounds.EVENTS.register(modBus);
         modBus.addListener(GuardPackets::register);
         NeoForge.EVENT_BUS.addListener(GuardState::tick);
         NeoForge.EVENT_BUS.addListener(this::commands);
@@ -44,6 +45,7 @@ public final class MallardGuard {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
         GuardState.Result result = GuardState.handleHit(player, event.getSource());
         if (result == GuardState.Result.PERFECT || result == GuardState.Result.PARRY) {
+            GuardEffects.onHit(player, event.getSource(), result);
             PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : 1));
             GuardState.wear(player, result);
             event.setCanceled(true);
@@ -61,6 +63,7 @@ public final class MallardGuard {
             return;
         }
         if (result == GuardState.Result.BLOCK) {
+            GuardEffects.onHit(player, event.getSource(), result);
             PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(3));
             GuardState.wear(player, result);
             event.setAmount(event.getAmount() * (1.0F - GuardConfig.BLOCK_REDUCTION.get().floatValue()));

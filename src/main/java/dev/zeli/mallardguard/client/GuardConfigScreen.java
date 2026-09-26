@@ -13,8 +13,10 @@ import net.neoforged.neoforge.network.PacketDistributor;
 
 public final class GuardConfigScreen extends Screen {
     private final boolean operator;
-    private boolean combatPage;
+    private int page;
     private boolean parry, block, hud, shieldEffects;
+    private boolean hitSounds, hitParticles, screenFlash;
+    private int flashStrength;
     private int perfect, window, recharge, angle, reductionPercent;
     private int followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability;
 
@@ -29,16 +31,25 @@ public final class GuardConfigScreen extends Screen {
         perfectWear = settings.perfectWear(); blockWear = settings.blockWear(); addedDurability = settings.addedDurability();
         hud = GuardConfig.HUD.get();
         shieldEffects = GuardConfig.SHIELD_EFFECTS.get();
+        hitSounds = settings.hitSounds();
+        hitParticles = settings.hitParticles();
+        screenFlash = GuardConfig.SCREEN_FLASH.get();
+        flashStrength = GuardConfig.FLASH_STRENGTH.get();
     }
 
     @Override protected void init() {
         int left = width / 2 - 110;
         int top = height / 2 - 123;
-        addRenderableWidget(Button.builder(Component.literal(combatPage ? "Timing" : "Combat"), b -> {
-            combatPage = !combatPage;
-            rebuildWidgets();
-        }).bounds(left, top + 20, 220, 20).build());
-        if (combatPage) {
+        String[] pages = {"Timing", "Combat", "Effects"};
+        for (int i = 0; i < pages.length; i++) {
+            final int target = i;
+            Button tab = addRenderableWidget(Button.builder(Component.literal(pages[i]), b -> {
+                page = target;
+                rebuildWidgets();
+            }).bounds(left + i * 75, top + 20, 70, 20).build());
+            tab.active = page != i;
+        }
+        if (page == 1) {
             slider(left, top + 44, "Follow-up safety", followUp, 0, 20, " ticks", "After a successful parry, automatically parry additional melee hits for this many ticks. The stance still ends immediately; follow-up hits do not extend the timer. 0 disables it.", v -> followUp = v);
             slider(left, top + 68, "Parry retaliation", parryReturnPercent, 0, 300, "%", "Damage returned to the attacker by a regular parry, as a percentage of the incoming hit. Follow-up safety uses this value. 0 disables retaliation.", v -> parryReturnPercent = v);
             slider(left, top + 92, "Perfect retaliation", perfectReturnPercent, 0, 300, "%", "Damage returned to the attacker by a perfect parry, as a percentage of the incoming hit. 0 disables retaliation.", v -> perfectReturnPercent = v);
@@ -46,27 +57,42 @@ public final class GuardConfigScreen extends Screen {
             slider(left, top + 140, "Perfect item wear", perfectWear, 0, 100, "", "Base durability lost from a perfect parry. Fragile items can lose more. 0 disables this wear.", v -> perfectWear = v);
             slider(left, top + 164, "Block item wear", blockWear, 0, 100, "", "Base durability lost each time a hit is caught during held block. Fragile items can lose more. 0 disables this wear.", v -> blockWear = v);
             slider(left, top + 188, "Added durability", addedDurability, 0, 10000, "", "Maximum durability granted to eligible attack items that normally have none, when they first take parry or block wear. 0 disables this feature.", v -> addedDurability = v);
-        } else {
+        } else if (page == 0) {
             Button parryButton = addRenderableWidget(Button.builder(label("Parry", parry), b -> {
                 parry = !parry; b.setMessage(label("Parry", parry));
             }).bounds(left, top + 44, 105, 20).build());
             Button blockButton = addRenderableWidget(Button.builder(label("Held block", block), b -> {
                 block = !block; b.setMessage(label("Held block", block));
             }).bounds(left + 115, top + 44, 105, 20).build());
-            tip(parryButton, "Enables the short parry window when you press Use Item with an eligible attack item.");
-            tip(blockButton, "Enables the held guarding stance after the parry window while Use Item stays pressed. A valid hit during held block has its damage reduced.");
+            tip(parryButton, "Enables the short parry window when you press the configured guard key (right-click by default) with an eligible attack item.");
+            tip(blockButton, "Enables the held guarding stance after the parry window while the configured guard key stays pressed. A valid hit during held block has its damage reduced.");
             parryButton.active = blockButton.active = operator;
             slider(left, top + 68, "Perfect window", perfect, 0, 5, " ticks", "The opening part of a parry attempt that counts as a perfect parry. 0 disables perfect parries. Included within the total parry window.", v -> perfect = v);
-            slider(left, top + 92, "Parry window", window, 1, 10, " ticks", "Total time after pressing Use Item when an eligible melee hit can be parried, including the perfect window.", v -> window = v);
+            slider(left, top + 92, "Parry window", window, 1, 10, " ticks", "Total time after pressing the configured guard key when an eligible melee hit can be parried, including the perfect window.", v -> window = v);
             slider(left, top + 116, "Recharge", recharge, 1, 60, " ticks", "Cooldown before you can begin another parry attempt. The shield refills while you are not holding block.", v -> recharge = v);
             slider(left, top + 140, "Facing angle", angle, 0, 360, "°", "How wide the valid attack area is around your view direction. 180° covers the front half; 360° allows melee hits from every direction. Attacker must still be close.", v -> angle = v);
             slider(left, top + 164, "Block reduction", reductionPercent, 0, 100, "%", "Percentage of incoming melee damage prevented during held block. 50% halves the damage; 100% prevents it all.", v -> reductionPercent = v);
+        } else {
+            Button soundsButton = addRenderableWidget(Button.builder(label("Hit sounds", hitSounds), b -> {
+                hitSounds = !hitSounds; b.setMessage(label("Hit sounds", hitSounds));
+            }).bounds(left, top + 44, 105, 20).build());
+            tip(soundsButton, "Plays one of the supplied sounds when a parry, perfect parry, or held block catches a hit. Other nearby players can hear it. Server setting.");
+            Button particlesButton = addRenderableWidget(Button.builder(label("Hit particles", hitParticles), b -> {
+                hitParticles = !hitParticles; b.setMessage(label("Hit particles", hitParticles));
+            }).bounds(left + 115, top + 44, 105, 20).build());
+            tip(particlesButton, "Spawns a small burst of sparks where a melee hit is parried or blocked. Visible to nearby players. Server setting.");
+            soundsButton.active = particlesButton.active = operator;
             tip(addRenderableWidget(Button.builder(label("Shield", hud), b -> {
                 hud = !hud; b.setMessage(label("Shield", hud));
-            }).bounds(left, top + 188, 105, 20).build()), "Shows the small shield near the crosshair while parrying or recharging. Only changes your own display.");
+            }).bounds(left, top + 68, 105, 20).build()), "Shows the small shield near the crosshair while parrying or recharging. Only changes your own display.");
             tip(addRenderableWidget(Button.builder(label("Shield effects", shieldEffects), b -> {
                 shieldEffects = !shieldEffects; b.setMessage(label("Shield effects", shieldEffects));
-            }).bounds(left + 115, top + 188, 105, 20).build()), "Flashes the shield gold for a perfect parry, white for a regular parry, or red for a held block. The shield shakes and grows; perfect parries also send out a faint gold echo. Only changes your own display.");
+            }).bounds(left + 115, top + 68, 105, 20).build()), "Flashes the shield gold for a perfect parry, white for a regular parry, or red for a held block. The shield shakes and grows; perfect parries also send out a faint gold echo. Only changes your own display.");
+            tip(addRenderableWidget(Button.builder(label("Screen flash", screenFlash), b -> {
+                screenFlash = !screenFlash; b.setMessage(label("Screen flash", screenFlash));
+            }).bounds(left, top + 92, 220, 20).build()), "Briefly tints your screen when a hit is parried or blocked. Perfect parries are strongest; blocks are faintest. Only changes your own display.");
+            Slider strength = addRenderableWidget(new Slider(left, top + 116, 220, "Flash strength", flashStrength, 0, 100, "%", v -> flashStrength = v));
+            tip(strength, "Brightness of the brief screen tint. 0% disables it. Only changes your own display.");
         }
         addRenderableWidget(Button.builder(Component.literal("Save & close"), b -> save()).bounds(left, top + 213, 105, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose()).bounds(left + 115, top + 213, 105, 20).build());
@@ -89,8 +115,10 @@ public final class GuardConfigScreen extends Screen {
     private void save() {
         GuardConfig.HUD.set(hud);
         GuardConfig.SHIELD_EFFECTS.set(shieldEffects);
+        GuardConfig.SCREEN_FLASH.set(screenFlash);
+        GuardConfig.FLASH_STRENGTH.set(flashStrength);
         GuardConfig.CLIENT_SPEC.save();
-        if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, perfect, window, recharge, angle, reductionPercent, followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability));
+        if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, perfect, window, recharge, angle, reductionPercent, followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability, hitSounds, hitParticles));
         onClose();
     }
 

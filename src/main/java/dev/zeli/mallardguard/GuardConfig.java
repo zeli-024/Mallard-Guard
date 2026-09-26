@@ -19,14 +19,18 @@ public final class GuardConfig {
     public static final ModConfigSpec.IntValue PERFECT_WEAR;
     public static final ModConfigSpec.IntValue BLOCK_WEAR;
     public static final ModConfigSpec.IntValue ADDED_DURABILITY;
+    public static final ModConfigSpec.BooleanValue HIT_SOUNDS;
+    public static final ModConfigSpec.BooleanValue HIT_PARTICLES;
     public static final ModConfigSpec.BooleanValue HUD;
     public static final ModConfigSpec.BooleanValue SHIELD_EFFECTS;
+    public static final ModConfigSpec.BooleanValue SCREEN_FLASH;
+    public static final ModConfigSpec.IntValue FLASH_STRENGTH;
 
     static {
         ModConfigSpec.Builder server = new ModConfigSpec.Builder();
         server.push("stance");
         PARRY = server.comment("Allow a parry attempt at the start of a guard.").define("parry", true);
-        BLOCK = server.comment("Remain in a guarding stance while Use Item is held.").define("block", true);
+        BLOCK = server.comment("Remain in a guarding stance while the guard key is held.").define("block", true);
         server.pop();
         server.push("timing");
         PERFECT_TICKS = server.comment("Perfect parry duration; zero disables perfect parries.").defineInRange("perfectTicks", 3, 0, 5);
@@ -44,12 +48,18 @@ public final class GuardConfig {
         BLOCK_WEAR = server.comment("Item durability lost per blocked hit.").defineInRange("blockWear", 5, 0, 100);
         ADDED_DURABILITY = server.comment("Maximum durability granted to eligible damage items that have none; zero disables this.").defineInRange("addedDurability", 250, 0, 10000);
         server.pop();
+        server.push("effects");
+        HIT_SOUNDS = server.comment("Play the supplied parry and block sounds to nearby players.").define("hitSounds", true);
+        HIT_PARTICLES = server.comment("Spawn impact sparks where valid melee hits are parried or blocked.").define("hitParticles", true);
+        server.pop();
         SERVER_SPEC = server.build();
 
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
         client.push("display");
         HUD = client.comment("Show the parry shield by the crosshair.").define("hud", true);
         SHIELD_EFFECTS = client.comment("Flash, shake, and briefly grow the shield after a parry or block.").define("shieldEffects", true);
+        SCREEN_FLASH = client.comment("Briefly tint the screen after a parry or block. Client-side only.").define("screenFlash", true);
+        FLASH_STRENGTH = client.comment("Strength of the brief screen flash, as a percentage. 0 disables it.").defineInRange("flashStrength", 50, 0, 100);
         client.pop();
         CLIENT_SPEC = client.build();
     }
@@ -71,10 +81,12 @@ public final class GuardConfig {
         PERFECT_WEAR.set(data.perfectWear());
         BLOCK_WEAR.set(data.blockWear());
         ADDED_DURABILITY.set(data.addedDurability());
+        HIT_SOUNDS.set(data.hitSounds());
+        HIT_PARTICLES.set(data.hitParticles());
         SERVER_SPEC.save();
     }
 
     public static GuardPackets.Settings snapshot(boolean operator) {
-        return new GuardPackets.Settings(PARRY.get(), BLOCK.get(), PERFECT_TICKS.get(), PARRY_TICKS.get(), RECHARGE_TICKS.get(), FACING_ANGLE.get(), (int) Math.round(BLOCK_REDUCTION.get() * 100.0D), FOLLOW_UP_TICKS.get(), (int) Math.round(PARRY_RETALIATION.get() * 100), (int) Math.round(PERFECT_RETALIATION.get() * 100), PARRY_WEAR.get(), PERFECT_WEAR.get(), BLOCK_WEAR.get(), ADDED_DURABILITY.get(), operator);
+        return new GuardPackets.Settings(PARRY.get(), BLOCK.get(), PERFECT_TICKS.get(), PARRY_TICKS.get(), RECHARGE_TICKS.get(), FACING_ANGLE.get(), (int) Math.round(BLOCK_REDUCTION.get() * 100.0D), FOLLOW_UP_TICKS.get(), (int) Math.round(PARRY_RETALIATION.get() * 100), (int) Math.round(PERFECT_RETALIATION.get() * 100), PARRY_WEAR.get(), PERFECT_WEAR.get(), BLOCK_WEAR.get(), ADDED_DURABILITY.get(), HIT_SOUNDS.get(), HIT_PARTICLES.get(), operator);
     }
 }

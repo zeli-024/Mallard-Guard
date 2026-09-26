@@ -121,12 +121,19 @@ public final class GuardClient {
         int crosshairY = (event.getGuiGraphics().guiHeight() - 15) / 2;
         int shieldX = crosshairX + (15 - 8) / 2;
         int shieldY = crosshairY + 15 + 2;
+        long resultAge = System.currentTimeMillis() - resultStartMs;
+        if (GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0 && hitResult != 0 && resultAge >= 0 && resultAge < 220) {
+            float decay = 1.0F - resultAge / 220.0F;
+            float base = hitResult == 2 ? 0.24F : hitResult == 1 ? 0.16F : 0.10F;
+            int alpha = Math.round(255.0F * base * GuardConfig.FLASH_STRENGTH.get() / 100.0F * decay * decay);
+            int color = hitResult == 2 ? 0xFFE6A0 : hitResult == 1 ? 0xFFFFFF : 0xFF9898;
+            event.getGuiGraphics().fill(0, 0, event.getGuiGraphics().guiWidth(), event.getGuiGraphics().guiHeight(), (alpha << 24) | color);
+        }
         if (!GuardConfig.HUD.get()) return;
         boolean showingResult = resultVisible();
         if (phase == 0 && recharge == 0 && !showingResult) return;
-        long resultAge = System.currentTimeMillis() - resultStartMs;
         float progress = showingResult ? Math.min(1.0F, resultAge / (float) FLASH_DURATION_MS) : 1.0F;
-        float expansion = hitResult == 2 ? 0.42F : hitResult == 1 ? 0.30F : 0.18F;
+        float expansion = hitResult == 2 ? 0.50F : hitResult == 1 ? 0.30F : 0.18F;
         float pulse = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(Math.PI * progress) * expansion : 0.0F;
         float shakeStrength = hitResult == 2 ? 2.2F : 1.1F;
         float shake = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.13D) * shakeStrength * (1.0F - progress) : 0.0F;
@@ -138,7 +145,7 @@ public final class GuardClient {
         RenderSystem.defaultBlendFunc();
         if (showingResult && hitResult == 2 && resultAge < ECHO_DURATION_MS) {
             float echoProgress = resultAge / (float) ECHO_DURATION_MS;
-            float echoScale = 0.25F * (1.0F + 1.35F * echoProgress);
+            float echoScale = 0.25F * (1.0F + 1.65F * echoProgress);
             event.getGuiGraphics().pose().pushPose();
             event.getGuiGraphics().pose().scale(echoScale, echoScale, 1.0F);
             event.getGuiGraphics().pose().translate(-16, -16, 0);
