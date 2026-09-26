@@ -6,8 +6,6 @@ import dev.zeli.mallardguard.GuardPackets;
 import dev.zeli.mallardguard.MallardGuard;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.AttackIndicatorStatus;
-import net.minecraft.ChatFormatting;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
@@ -23,6 +21,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 public final class GuardClient {
     private static final ResourceLocation BACKGROUND = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/backgroundlayer.png");
     private static final ResourceLocation ANIMATED = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/animatedlayer.png");
+    private static final ResourceLocation FLASH_MASK = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/flashmask.png");
     private static boolean wasDown;
     private static int phase;
     private static int elapsed;
@@ -30,8 +29,9 @@ public final class GuardClient {
     private static int window = 7;
     private static int rechargeMax = 12;
     private static int hitResult;
-    private static int resultTicks;
-    private static final int RESULT_DURATION = 18;
+    private static long resultStartMs;
+    private static final long FLASH_DURATION_MS = 420;
+    private static final long RESULT_HOLD_MS = 620;
     private static AttackIndicatorStatus savedAttackIndicator;
 
     private GuardClient() {}
@@ -60,7 +60,7 @@ public final class GuardClient {
     public static void hitResult(GuardPackets.HitResult data) {
         if (data.result() < 1 || data.result() > 3) return;
         hitResult = data.result();
-        resultTicks = RESULT_DURATION;
+        resultStartMs = System.currentTimeMillis();
     }
 
     @SubscribeEvent
@@ -70,10 +70,10 @@ public final class GuardClient {
             restoreAttackIndicator();
             wasDown = false;
             phase = recharge = 0;
-            hitResult = resultTicks = 0;
+            hitResult = 0;
+            resultStartMs = 0;
             return;
         }
-        if (resultTicks > 0) resultTicks--;
         boolean down = mc.screen == null && mc.options.keyUse.isDown();
         if (down != wasDown) {
             wasDown = down;
@@ -87,7 +87,7 @@ public final class GuardClient {
     public static void beforeLayer(RenderGuiLayerEvent.Pre event) {
         if (savedAttackIndicator != null) restoreAttackIndicator();
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get() || (phase == 0 && recharge == 0)) return;
+        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get() || (phase == 0 && recharge == 0 && !resultVisible())) return;
         if (event.getName().equals(VanillaGuiLayers.CROSSHAIR) || event.getName().equals(VanillaGuiLayers.HOTBAR)) {
             savedAttackIndicator = mc.options.attackIndicator().get();
             mc.options.attackIndicator().set(AttackIndicatorStatus.OFF);
@@ -106,6 +106,11 @@ public final class GuardClient {
         }
     }
 
+    private static boolean resultVisible() {
+        long age = System.currentTimeMillis() - resultStartMs;
+        return GuardConfig.SHIELD_EFFECTS.get() && hitResult != 0 && age >= 0 && age < RESULT_HOLD_MS;
+    }
+
     @SubscribeEvent
     public static void render(RenderGuiEvent.Post event) {
         restoreAttackIndicator();
@@ -115,48 +120,29 @@ public final class GuardClient {
         int crosshairY = (event.getGuiGraphics().guiHeight() - 15) / 2;
         int shieldX = crosshairX + (15 - 8) / 2;
         int shieldY = crosshairY + 15 + 2;
-        if (GuardConfig.RESULT_TEXT.get() && resultTicks > 0) {
-            Component message = switch (hitResult) {
-                case 1 -> Component.literal("PARRY");
-                case 2 -> Component.literal("PERFECT PARRY").withStyle(ChatFormatting.BOLD, ChatFormatting.ITALIC);
-                case 3 -> Component.literal("BLOCK");
-                default -> Component.empty();
-            };
-            int rgb = switch (hitResult) {
-                case 2 -> 0xFFD700;
-                case 3 -> 0xD5D8DC;
-                default -> 0xFFFFFF;
-            };
-            int alpha = resultTicks >= 5 ? 255 : Math.max(0, resultTicks * 255 / 5);
-            int glowAlpha = Math.min(100, alpha / 2);
-            int x = crosshairX + 7;
-            int y = shieldY + 11;
-            event.getGuiGraphics().pose().pushPose();
-            event.getGuiGraphics().pose().translate(x, y, 0);
-            event.getGuiGraphics().pose().scale(0.65F, 0.65F, 1.0F);
-            int center = 0;
-            int glow = (glowAlpha << 24) | rgb;
-            event.getGuiGraphics().drawCenteredString(mc.font, message, center - 2, 0, glow);
-            event.getGuiGraphics().drawCenteredString(mc.font, message, center + 2, 0, glow);
-            event.getGuiGraphics().drawCenteredString(mc.font, message, center, -2, glow);
-            event.getGuiGraphics().drawCenteredString(mc.font, message, center, 2, glow);
-            event.getGuiGraphics().drawCenteredString(mc.font, message, center, 0, (alpha << 24) | rgb);
-            event.getGuiGraphics().pose().popPose();
-        }
         if (!GuardConfig.HUD.get()) return;
-        if (phase == 0 && recharge == 0) return;
+        boolean showingResult = resultVisible();
+        if (phase == 0 && recharge == 0 && !showingResult) return;
+        long resultAge = System.currentTimeMillis() - resultStartMs;
+        float progress = showingResult ? Math.min(1.0F, resultAge / (float) FLASH_DURATION_MS) : 1.0F;
+        float pulse = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(Math.PI * progress) * 0.18F : 0.0F;
+        float shake = showingResult && resultAge < FLASH_DURATION_MS ? (float) (Math.sin(resultAge * 0.13D) * 1.1D * (1.0F - progress)) : 0.0F;
         boolean draining = phase == 1 || phase == 2;
-        int x = shieldX;
-        int y = shieldY;
         event.getGuiGraphics().pose().pushPose();
-        event.getGuiGraphics().pose().translate(x, y, 0);
-        event.getGuiGraphics().pose().scale(0.25f, 0.25f, 1f);
+        event.getGuiGraphics().pose().translate(shieldX + 4 + shake, shieldY + 4, 0);
+        float iconScale = 0.25F * (1.0F + pulse);
+        event.getGuiGraphics().pose().scale(iconScale, iconScale, 1.0F);
+        event.getGuiGraphics().pose().translate(-16, -16, 0);
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShaderColor(0.24f, 0.24f, 0.24f, 1f);
         event.getGuiGraphics().blit(BACKGROUND, 0, 0, 0, 0, 32, 32, 32, 32);
         RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
-        if (draining) {
+        if (showingResult && phase == 0 && recharge == 0) {
+            // Perfect parries otherwise clear the shield immediately. Hold its normal
+            // color briefly after the flash, then let the icon disappear as usual.
+            event.getGuiGraphics().blit(ANIMATED, 0, 0, 0, 0, 32, 32, 32, 32);
+        } else if (draining) {
             int removed = Math.min(32, Math.max(0, Math.round(32f * elapsed / Math.max(1, window))));
             if (removed < 32) {
                 event.getGuiGraphics().blit(ANIMATED, removed, 0, removed, 0, 32 - removed, 32, 32, 32);
@@ -167,6 +153,17 @@ public final class GuardClient {
                 int start = 32 - filled;
                 event.getGuiGraphics().blit(ANIMATED, start, 0, start, 0, filled, 32, 32, 32);
             }
+        }
+        if (showingResult && resultAge < FLASH_DURATION_MS) {
+            int rgb = switch (hitResult) {
+                case 2 -> 0xFFD43B; // perfect parry: gold
+                case 3 -> 0xFF3D4E; // held block: red
+                default -> 0xFFFFFF; // regular and follow-up parry: white
+            };
+            float fade = 1.0F - progress * progress;
+            RenderSystem.setShaderColor(((rgb >> 16) & 255) / 255.0F, ((rgb >> 8) & 255) / 255.0F, (rgb & 255) / 255.0F, 0.9F * fade);
+            event.getGuiGraphics().blit(FLASH_MASK, 0, 0, 0, 0, 32, 32, 32, 32);
+            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
         }
         RenderSystem.disableBlend();
         event.getGuiGraphics().pose().popPose();

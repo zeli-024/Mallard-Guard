@@ -20,7 +20,7 @@ public final class GuardConfig {
     public static final ModConfigSpec.IntValue BLOCK_WEAR;
     public static final ModConfigSpec.IntValue ADDED_DURABILITY;
     public static final ModConfigSpec.BooleanValue HUD;
-    public static final ModConfigSpec.BooleanValue RESULT_TEXT;
+    public static final ModConfigSpec.BooleanValue SHIELD_EFFECTS;
 
     static {
         ModConfigSpec.Builder server = new ModConfigSpec.Builder();
@@ -49,7 +49,7 @@ public final class GuardConfig {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
         client.push("display");
         HUD = client.comment("Show the parry shield by the crosshair.").define("hud", true);
-        RESULT_TEXT = client.comment("Show short text near the crosshair after a parry or block.").define("resultText", true);
+        SHIELD_EFFECTS = client.comment("Flash, shake, and briefly grow the shield after a parry or block.").define("shieldEffects", true);
         client.pop();
         CLIENT_SPEC = client.build();
     }

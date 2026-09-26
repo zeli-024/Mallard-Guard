@@ -14,7 +14,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 public final class GuardConfigScreen extends Screen {
     private final boolean operator;
     private boolean combatPage;
-    private boolean parry, block, hud, resultText;
+    private boolean parry, block, hud, shieldEffects;
     private int perfect, window, recharge, angle, reductionPercent;
     private int followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability;
 
@@ -28,7 +28,7 @@ public final class GuardConfigScreen extends Screen {
         perfectReturnPercent = settings.perfectReturnPercent(); parryWear = settings.parryWear();
         perfectWear = settings.perfectWear(); blockWear = settings.blockWear(); addedDurability = settings.addedDurability();
         hud = GuardConfig.HUD.get();
-        resultText = GuardConfig.RESULT_TEXT.get();
+        shieldEffects = GuardConfig.SHIELD_EFFECTS.get();
     }
 
     @Override protected void init() {
@@ -64,9 +64,9 @@ public final class GuardConfigScreen extends Screen {
             tip(addRenderableWidget(Button.builder(label("Shield", hud), b -> {
                 hud = !hud; b.setMessage(label("Shield", hud));
             }).bounds(left, top + 188, 105, 20).build()), "Shows the small shield near the crosshair while parrying or recharging. Only changes your own display.");
-            tip(addRenderableWidget(Button.builder(label("Result text", resultText), b -> {
-                resultText = !resultText; b.setMessage(label("Result text", resultText));
-            }).bounds(left + 115, top + 188, 105, 20).build()), "Shows brief PARRY, PERFECT PARRY, or BLOCK text near the crosshair after a valid hit. Only changes your own display.");
+            tip(addRenderableWidget(Button.builder(label("Shield effects", shieldEffects), b -> {
+                shieldEffects = !shieldEffects; b.setMessage(label("Shield effects", shieldEffects));
+            }).bounds(left + 115, top + 188, 105, 20).build()), "Flashes the shield gold for a perfect parry, white for a regular parry, or red for a held block. Also briefly shakes and grows it. Only changes your own display.");
         }
         addRenderableWidget(Button.builder(Component.literal("Save & close"), b -> save()).bounds(left, top + 213, 105, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose()).bounds(left + 115, top + 213, 105, 20).build());
@@ -88,7 +88,7 @@ public final class GuardConfigScreen extends Screen {
 
     private void save() {
         GuardConfig.HUD.set(hud);
-        GuardConfig.RESULT_TEXT.set(resultText);
+        GuardConfig.SHIELD_EFFECTS.set(shieldEffects);
         GuardConfig.CLIENT_SPEC.save();
         if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, perfect, window, recharge, angle, reductionPercent, followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability));
         onClose();
