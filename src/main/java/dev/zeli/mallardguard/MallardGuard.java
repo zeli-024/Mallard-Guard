@@ -10,8 +10,7 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.entity.living.LivingAttackEvent;
-import net.neoforged.neoforge.event.entity.living.LivingHurtEvent;
+import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 @Mod(MallardGuard.ID)
@@ -24,8 +23,7 @@ public final class MallardGuard {
         modBus.addListener(GuardPackets::register);
         NeoForge.EVENT_BUS.addListener(GuardState::tick);
         NeoForge.EVENT_BUS.addListener(this::commands);
-        NeoForge.EVENT_BUS.addListener(this::attack);
-        NeoForge.EVENT_BUS.addListener(this::hurt);
+        NeoForge.EVENT_BUS.addListener(this::incomingDamage);
     }
 
     private void commands(RegisterCommandsEvent event) {
@@ -39,15 +37,13 @@ public final class MallardGuard {
         return 1;
     }
 
-    private void attack(LivingAttackEvent event) {
+    private void incomingDamage(LivingIncomingDamageEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
         GuardState.Result result = GuardState.handleHit(player, event.getSource());
-        if (result == GuardState.Result.PERFECT || result == GuardState.Result.PARRY) event.setCanceled(true);
-    }
-
-    private void hurt(LivingHurtEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) return;
-        GuardState.Result result = GuardState.handleHit(player, event.getSource());
+        if (result == GuardState.Result.PERFECT || result == GuardState.Result.PARRY) {
+            event.setCanceled(true);
+            return;
+        }
         if (result == GuardState.Result.BLOCK) event.setAmount(event.getAmount() * (1.0F - GuardConfig.BLOCK_REDUCTION.get().floatValue()));
     }
 }
