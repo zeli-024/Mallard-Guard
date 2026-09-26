@@ -157,7 +157,7 @@ public final class GuardPackets {
             || data.parryWear() < 0 || data.parryWear() > 100
             || data.perfectWear() < 0 || data.perfectWear() > 100
             || data.blockWear() < 0 || data.blockWear() > 100
-            || data.addedDurability() < 0 || data.addedDurability() > 10000
+            || data.addedDurability() < 10 || data.addedDurability() > 1000
             || data.masterVolume() < 0 || data.masterVolume() > 200
             || data.perfectVolume() < 0 || data.perfectVolume() > 200
             || data.parryVolume() < 0 || data.parryVolume() > 200

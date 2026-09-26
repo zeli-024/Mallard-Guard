@@ -79,7 +79,7 @@ public final class GuardConfigScreen extends Screen {
             slider(left, top + 116, "Parry item wear", parryWear, 0, 100, "", "Base durability lost from a regular parry or a follow-up safety parry. Fragile items can lose more. 0 disables this wear.", v -> parryWear = v);
             slider(left, top + 140, "Perfect item wear", perfectWear, 0, 100, "", "Base durability lost from a perfect parry. Fragile items can lose more. 0 disables this wear.", v -> perfectWear = v);
             slider(left, top + 164, "Block item wear", blockWear, 0, 100, "", "Base durability lost each time a hit is caught during held block. Fragile items can lose more. 0 disables this wear.", v -> blockWear = v);
-            slider(left, top + 188, "Added durability", addedDurability, 0, 10000, "", "Maximum durability granted to eligible attack items that normally have none, when they first take parry or block wear. 0 disables this feature.", v -> addedDurability = v);
+            slider(left, top + 188, "Added durability", addedDurability, 10, 1000, "", "Maximum durability granted to eligible attack items that normally have none, when they first take parry or block wear.", v -> addedDurability = v);
         } else if (page == 0) {
             Button parryButton = addRenderableWidget(Button.builder(label("Parry", parry), b -> {
                 parry = !parry; b.setMessage(label("Parry", parry));

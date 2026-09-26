@@ -25,7 +25,7 @@ public final class GuardFireworkFlashParticle extends TextureSheetParticle {
         super(level, x, y, z);
         lifetime = 4;
         hasPhysics = false;
-        size = perfect ? 0.58F : 0.35F;
+        size = perfect ? 0.40F : 0.25F;
         pickSprite(sprites);
     }
 
@@ -45,7 +45,7 @@ public final class GuardFireworkFlashParticle extends TextureSheetParticle {
 
     @Override public void render(VertexConsumer vertices, Camera camera, float partialTick) {
         float progress = Mth.clamp((age + partialTick) / lifetime, 0.0F, 1.0F);
-        setAlpha(0.85F - 0.30F * progress);
+        setAlpha(0.70F - 0.30F * progress);
         super.render(vertices, camera, partialTick);
     }
 
