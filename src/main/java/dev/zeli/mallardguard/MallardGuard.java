@@ -23,6 +23,7 @@ public final class MallardGuard {
         container.registerConfig(ModConfig.Type.SERVER, GuardConfig.SERVER_SPEC);
         container.registerConfig(ModConfig.Type.CLIENT, GuardConfig.CLIENT_SPEC);
         GuardSounds.EVENTS.register(modBus);
+        GuardParticles.TYPES.register(modBus);
         modBus.addListener(GuardPackets::register);
         NeoForge.EVENT_BUS.addListener(GuardState::tick);
         NeoForge.EVENT_BUS.addListener(this::commands);

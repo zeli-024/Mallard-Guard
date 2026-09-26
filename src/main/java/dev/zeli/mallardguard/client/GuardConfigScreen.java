@@ -17,6 +17,7 @@ public final class GuardConfigScreen extends Screen {
     private boolean parry, block, hud, shieldEffects;
     private boolean hitSounds, hitParticles, screenFlash;
     private int flashStrength;
+    private int masterVolume, perfectVolume, parryVolume, blockVolume;
     private int perfect, window, recharge, angle, reductionPercent;
     private int followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability;
 
@@ -33,6 +34,8 @@ public final class GuardConfigScreen extends Screen {
         shieldEffects = GuardConfig.SHIELD_EFFECTS.get();
         hitSounds = settings.hitSounds();
         hitParticles = settings.hitParticles();
+        masterVolume = settings.masterVolume(); perfectVolume = settings.perfectVolume();
+        parryVolume = settings.parryVolume(); blockVolume = settings.blockVolume();
         screenFlash = GuardConfig.SCREEN_FLASH.get();
         flashStrength = GuardConfig.FLASH_STRENGTH.get();
     }
@@ -40,13 +43,13 @@ public final class GuardConfigScreen extends Screen {
     @Override protected void init() {
         int left = width / 2 - 110;
         int top = height / 2 - 123;
-        String[] pages = {"Timing", "Combat", "Effects"};
+        String[] pages = {"Timing", "Combat", "Effects", "Audio"};
         for (int i = 0; i < pages.length; i++) {
             final int target = i;
             Button tab = addRenderableWidget(Button.builder(Component.literal(pages[i]), b -> {
                 page = target;
                 rebuildWidgets();
-            }).bounds(left + i * 75, top + 20, 70, 20).build());
+            }).bounds(left + i * 56, top + 20, 52, 20).build());
             tab.active = page != i;
         }
         if (page == 1) {
@@ -72,7 +75,7 @@ public final class GuardConfigScreen extends Screen {
             slider(left, top + 116, "Recharge", recharge, 1, 60, " ticks", "Cooldown before you can begin another parry attempt. The shield refills while you are not holding block.", v -> recharge = v);
             slider(left, top + 140, "Facing angle", angle, 0, 360, "°", "How wide the valid attack area is around your view direction. 180° covers the front half; 360° allows melee hits from every direction. Attacker must still be close.", v -> angle = v);
             slider(left, top + 164, "Block reduction", reductionPercent, 0, 100, "%", "Percentage of incoming melee damage prevented during held block. 50% halves the damage; 100% prevents it all.", v -> reductionPercent = v);
-        } else {
+        } else if (page == 2) {
             Button soundsButton = addRenderableWidget(Button.builder(label("Hit sounds", hitSounds), b -> {
                 hitSounds = !hitSounds; b.setMessage(label("Hit sounds", hitSounds));
             }).bounds(left, top + 44, 105, 20).build());
@@ -80,7 +83,7 @@ public final class GuardConfigScreen extends Screen {
             Button particlesButton = addRenderableWidget(Button.builder(label("Hit particles", hitParticles), b -> {
                 hitParticles = !hitParticles; b.setMessage(label("Hit particles", hitParticles));
             }).bounds(left + 115, top + 44, 105, 20).build());
-            tip(particlesButton, "Spawns a small burst of sparks where a melee hit is parried or blocked. Visible to nearby players. Server setting.");
+            tip(particlesButton, "Spawns bundled anvil-style sparks at valid melee impacts for nearby players. No additional mod required. Server setting.");
             soundsButton.active = particlesButton.active = operator;
             tip(addRenderableWidget(Button.builder(label("Shield", hud), b -> {
                 hud = !hud; b.setMessage(label("Shield", hud));
@@ -90,9 +93,19 @@ public final class GuardConfigScreen extends Screen {
             }).bounds(left + 115, top + 68, 105, 20).build()), "Flashes the shield gold for a perfect parry, white for a regular parry, or red for a held block. The shield shakes and grows; perfect parries also send out a faint gold echo. Only changes your own display.");
             tip(addRenderableWidget(Button.builder(label("Screen flash", screenFlash), b -> {
                 screenFlash = !screenFlash; b.setMessage(label("Screen flash", screenFlash));
-            }).bounds(left, top + 92, 220, 20).build()), "Briefly tints your screen when a hit is parried or blocked. Perfect parries are strongest; blocks are faintest. Only changes your own display.");
+            }).bounds(left, top + 92, 220, 20).build()), "A brief white flash and expanding golden rings behind the shield after a hit. Only changes your own display.");
             Slider strength = addRenderableWidget(new Slider(left, top + 116, 220, "Flash strength", flashStrength, 0, 100, "%", v -> flashStrength = v));
-            tip(strength, "Brightness of the brief screen tint. 0% disables it. Only changes your own display.");
+            tip(strength, "Brightness of the white flash and expanding rings. 0% disables them. Only changes your own display.");
+        } else {
+            Button soundsButton = addRenderableWidget(Button.builder(label("Hit sounds", hitSounds), b -> {
+                hitSounds = !hitSounds; b.setMessage(label("Hit sounds", hitSounds));
+            }).bounds(left, top + 44, 220, 20).build());
+            tip(soundsButton, "Plays parry, perfect parry, and block sounds to nearby players. This switch mutes all three. Server setting.");
+            soundsButton.active = operator;
+            slider(left, top + 68, "Master volume", masterVolume, 0, 200, "%", "Controls all three guard hit sounds together. Multiplies their individual volumes. 0% mutes them; 100% is normal. Server setting.", v -> masterVolume = v);
+            slider(left, top + 92, "Perfect volume", perfectVolume, 0, 200, "%", "Volume of the perfect parry sound, multiplied by master volume. 0% mutes this result only. Server setting.", v -> perfectVolume = v);
+            slider(left, top + 116, "Parry volume", parryVolume, 0, 200, "%", "Volume of the regular and follow-up parry sounds, multiplied by master volume. 0% mutes this result only. Server setting.", v -> parryVolume = v);
+            slider(left, top + 140, "Block volume", blockVolume, 0, 200, "%", "Volume of the held block sound, multiplied by master volume. 0% mutes this result only. Server setting.", v -> blockVolume = v);
         }
         addRenderableWidget(Button.builder(Component.literal("Save & close"), b -> save()).bounds(left, top + 213, 105, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose()).bounds(left + 115, top + 213, 105, 20).build());
@@ -118,7 +131,7 @@ public final class GuardConfigScreen extends Screen {
         GuardConfig.SCREEN_FLASH.set(screenFlash);
         GuardConfig.FLASH_STRENGTH.set(flashStrength);
         GuardConfig.CLIENT_SPEC.save();
-        if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, perfect, window, recharge, angle, reductionPercent, followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability, hitSounds, hitParticles));
+        if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, perfect, window, recharge, angle, reductionPercent, followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability, hitSounds, hitParticles, masterVolume, perfectVolume, parryVolume, blockVolume));
         onClose();
     }
 

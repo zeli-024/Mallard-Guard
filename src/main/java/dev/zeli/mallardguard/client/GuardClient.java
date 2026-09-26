@@ -1,6 +1,7 @@
 package dev.zeli.mallardguard.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import org.joml.Quaternionf;
 import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.GuardPackets;
 import dev.zeli.mallardguard.MallardGuard;
@@ -122,18 +123,16 @@ public final class GuardClient {
         int shieldX = crosshairX + (15 - 8) / 2;
         int shieldY = crosshairY + 15 + 2;
         long resultAge = System.currentTimeMillis() - resultStartMs;
-        if (GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0 && hitResult != 0 && resultAge >= 0 && resultAge < 220) {
-            float decay = 1.0F - resultAge / 220.0F;
-            float base = hitResult == 2 ? 0.24F : hitResult == 1 ? 0.16F : 0.10F;
-            int alpha = Math.round(255.0F * base * GuardConfig.FLASH_STRENGTH.get() / 100.0F * decay * decay);
-            int color = hitResult == 2 ? 0xFFE6A0 : hitResult == 1 ? 0xFFFFFF : 0xFF9898;
-            event.getGuiGraphics().fill(0, 0, event.getGuiGraphics().guiWidth(), event.getGuiGraphics().guiHeight(), (alpha << 24) | color);
+        if (GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0 && hitResult != 0 && resultAge >= 0 && resultAge < 260) {
+            renderScreenFlash(event.getGuiGraphics(), resultAge);
+            // Commit the screen fill and rings before submitting the echo and shield textures.
+            event.getGuiGraphics().flush();
         }
         if (!GuardConfig.HUD.get()) return;
         boolean showingResult = resultVisible();
         if (phase == 0 && recharge == 0 && !showingResult) return;
         float progress = showingResult ? Math.min(1.0F, resultAge / (float) FLASH_DURATION_MS) : 1.0F;
-        float expansion = hitResult == 2 ? 0.50F : hitResult == 1 ? 0.30F : 0.18F;
+        float expansion = hitResult == 2 ? 0.58F : hitResult == 1 ? 0.30F : 0.18F;
         float pulse = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(Math.PI * progress) * expansion : 0.0F;
         float shakeStrength = hitResult == 2 ? 2.2F : 1.1F;
         float shake = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.13D) * shakeStrength * (1.0F - progress) : 0.0F;
@@ -149,7 +148,7 @@ public final class GuardClient {
             event.getGuiGraphics().pose().pushPose();
             event.getGuiGraphics().pose().scale(echoScale, echoScale, 1.0F);
             event.getGuiGraphics().pose().translate(-16, -16, 0);
-            RenderSystem.setShaderColor(1.0F, 0.78F, 0.16F, 0.18F * (1.0F - echoProgress));
+            RenderSystem.setShaderColor(1.0F, 0.78F, 0.16F, 0.22F * (1.0F - echoProgress));
             event.getGuiGraphics().blit(FLASH_MASK, 0, 0, 0, 0, 32, 32, 32, 32);
             RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
             event.getGuiGraphics().pose().popPose();
@@ -190,5 +189,35 @@ public final class GuardClient {
         }
         RenderSystem.disableBlend();
         event.getGuiGraphics().pose().popPose();
+    }
+
+    private static void renderScreenFlash(net.minecraft.client.gui.GuiGraphics graphics, long age) {
+        float progress = age / 260.0F;
+        float intensity = GuardConfig.FLASH_STRENGTH.get() / 100.0F * (hitResult == 2 ? 1.0F : hitResult == 1 ? 0.82F : 0.55F);
+        int alpha = Math.round(255.0F * 0.85F * (1.0F - progress) * intensity);
+        graphics.fill(0, 0, graphics.guiWidth(), graphics.guiHeight(), alpha << 24 | 0xFFFFFF);
+        // Parry It-style white flash with two expanding, fading warm-gold rings.
+        if (progress < 0.85F) {
+            float ringProgress = progress / 0.85F;
+            renderRing(graphics, ringProgress * 1.45F, intensity * 0.55F, 5.0F, 34.0F);
+            renderRing(graphics, ringProgress, intensity, 8.0F, 58.0F);
+        }
+    }
+
+    private static void renderRing(net.minecraft.client.gui.GuiGraphics graphics, float progress, float intensity, float startRadius, float endRadius) {
+        if (progress >= 1.0F) return;
+        float radius = startRadius + (endRadius - startRadius) * (1.0F - (1.0F - progress) * (1.0F - progress));
+        int alpha = Math.round(160.0F * intensity * (1.0F - progress));
+        int color = alpha << 24 | 0xFFC24A;
+        graphics.pose().pushPose();
+        graphics.pose().translate(graphics.guiWidth() / 2.0F, graphics.guiHeight() / 2.0F, 0);
+        for (int segment = 0; segment < 44; segment++) {
+            graphics.pose().pushPose();
+            graphics.pose().mulPose(new Quaternionf().rotationZ((float) (segment * Math.PI * 2.0D / 44.0D)));
+            int halfWidth = Math.max(1, Math.round((float) (Math.PI * radius / 44.0D)));
+            graphics.fill(Math.round(radius), -halfWidth, Math.round(radius + 2.0F), halfWidth, color);
+            graphics.pose().popPose();
+        }
+        graphics.pose().popPose();
     }
 }

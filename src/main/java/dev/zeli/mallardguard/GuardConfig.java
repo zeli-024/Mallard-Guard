@@ -21,6 +21,10 @@ public final class GuardConfig {
     public static final ModConfigSpec.IntValue ADDED_DURABILITY;
     public static final ModConfigSpec.BooleanValue HIT_SOUNDS;
     public static final ModConfigSpec.BooleanValue HIT_PARTICLES;
+    public static final ModConfigSpec.IntValue MASTER_VOLUME;
+    public static final ModConfigSpec.IntValue PERFECT_VOLUME;
+    public static final ModConfigSpec.IntValue PARRY_VOLUME;
+    public static final ModConfigSpec.IntValue BLOCK_VOLUME;
     public static final ModConfigSpec.BooleanValue HUD;
     public static final ModConfigSpec.BooleanValue SHIELD_EFFECTS;
     public static final ModConfigSpec.BooleanValue SCREEN_FLASH;
@@ -50,7 +54,11 @@ public final class GuardConfig {
         server.pop();
         server.push("effects");
         HIT_SOUNDS = server.comment("Play the supplied parry and block sounds to nearby players.").define("hitSounds", true);
-        HIT_PARTICLES = server.comment("Spawn impact sparks where valid melee hits are parried or blocked.").define("hitParticles", true);
+        HIT_PARTICLES = server.comment("Spawn bundled anvil-style sparks on valid parries and blocks.").define("hitParticles", true);
+        MASTER_VOLUME = server.comment("Master volume for guard hit sounds, percent; 0 mutes them.").defineInRange("masterVolume", 100, 0, 200);
+        PERFECT_VOLUME = server.comment("Perfect parry sound volume, multiplied by master volume.").defineInRange("perfectVolume", 100, 0, 200);
+        PARRY_VOLUME = server.comment("Regular parry sound volume, multiplied by master volume.").defineInRange("parryVolume", 100, 0, 200);
+        BLOCK_VOLUME = server.comment("Held block sound volume, multiplied by master volume.").defineInRange("blockVolume", 100, 0, 200);
         server.pop();
         SERVER_SPEC = server.build();
 
@@ -83,10 +91,14 @@ public final class GuardConfig {
         ADDED_DURABILITY.set(data.addedDurability());
         HIT_SOUNDS.set(data.hitSounds());
         HIT_PARTICLES.set(data.hitParticles());
+        MASTER_VOLUME.set(data.masterVolume());
+        PERFECT_VOLUME.set(data.perfectVolume());
+        PARRY_VOLUME.set(data.parryVolume());
+        BLOCK_VOLUME.set(data.blockVolume());
         SERVER_SPEC.save();
     }
 
     public static GuardPackets.Settings snapshot(boolean operator) {
-        return new GuardPackets.Settings(PARRY.get(), BLOCK.get(), PERFECT_TICKS.get(), PARRY_TICKS.get(), RECHARGE_TICKS.get(), FACING_ANGLE.get(), (int) Math.round(BLOCK_REDUCTION.get() * 100.0D), FOLLOW_UP_TICKS.get(), (int) Math.round(PARRY_RETALIATION.get() * 100), (int) Math.round(PERFECT_RETALIATION.get() * 100), PARRY_WEAR.get(), PERFECT_WEAR.get(), BLOCK_WEAR.get(), ADDED_DURABILITY.get(), HIT_SOUNDS.get(), HIT_PARTICLES.get(), operator);
+        return new GuardPackets.Settings(PARRY.get(), BLOCK.get(), PERFECT_TICKS.get(), PARRY_TICKS.get(), RECHARGE_TICKS.get(), FACING_ANGLE.get(), (int) Math.round(BLOCK_REDUCTION.get() * 100.0D), FOLLOW_UP_TICKS.get(), (int) Math.round(PARRY_RETALIATION.get() * 100), (int) Math.round(PERFECT_RETALIATION.get() * 100), PARRY_WEAR.get(), PERFECT_WEAR.get(), BLOCK_WEAR.get(), ADDED_DURABILITY.get(), HIT_SOUNDS.get(), HIT_PARTICLES.get(), MASTER_VOLUME.get(), PERFECT_VOLUME.get(), PARRY_VOLUME.get(), BLOCK_VOLUME.get(), operator);
     }
 }
