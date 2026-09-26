@@ -11,8 +11,11 @@ import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.entity.ProjectileImpactEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.world.phys.Vec3;
 
 @Mod(MallardGuard.ID)
 public final class MallardGuard {
@@ -28,6 +31,7 @@ public final class MallardGuard {
         NeoForge.EVENT_BUS.addListener(GuardState::tick);
         NeoForge.EVENT_BUS.addListener(this::commands);
         NeoForge.EVENT_BUS.addListener(this::incomingDamage);
+        NeoForge.EVENT_BUS.addListener(GuardCombatEffects::projectileImpact);
     }
 
     private void commands(RegisterCommandsEvent event) {
@@ -44,13 +48,24 @@ public final class MallardGuard {
     private void incomingDamage(LivingIncomingDamageEvent event) {
         if (RETURNING_DAMAGE.get()) return;
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (GuardCombatEffects.isOwnFallBlast(player, event.getSource())) {
+            event.setCanceled(true);
+            return;
+        }
         GuardState.Result result = GuardState.handleHit(player, event.getSource());
         if (result == GuardState.Result.PERFECT || result == GuardState.Result.PARRY) {
             GuardEffects.onHit(player, event.getSource(), result);
             PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : 1));
             GuardState.wear(player, result);
             event.setCanceled(true);
-            if (event.getSource().getEntity() instanceof LivingEntity attacker && attacker != player) {
+            if (event.getSource().is(DamageTypes.FALL) || event.getSource().is(DamageTypes.FLY_INTO_WALL)) {
+                GuardCombatEffects.fall(player, event.getAmount(), result == GuardState.Result.PERFECT);
+            } else {
+                Vec3 origin = event.getSource().getSourcePosition();
+                GuardCombatEffects.pushDefender(player, origin);
+            }
+            if (event.getSource().getEntity() instanceof LivingEntity attacker && attacker != player
+                && event.getSource().getDirectEntity() == attacker) {
                 float multiplier = result == GuardState.Result.PERFECT ? GuardConfig.PERFECT_RETALIATION.get().floatValue() : GuardConfig.PARRY_RETALIATION.get().floatValue();
                 if (multiplier > 0 && event.getAmount() > 0) {
                     RETURNING_DAMAGE.set(true);

@@ -1,9 +1,9 @@
 package dev.zeli.mallardguard.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import org.joml.Quaternionf;
 import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.GuardPackets;
+import dev.zeli.mallardguard.GuardParticles;
 import dev.zeli.mallardguard.MallardGuard;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.AttackIndicatorStatus;
@@ -15,6 +15,7 @@ import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.bus.api.SubscribeEvent;
 
@@ -63,6 +64,49 @@ public final class GuardClient {
         if (data.result() < 1 || data.result() > 3) return;
         hitResult = data.result();
         resultStartMs = System.currentTimeMillis();
+    }
+
+    public static void sparks(GuardPackets.Sparks data) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || data.count() < 1 || data.count() > 32) return;
+        // Our particles use the vanilla firework orb sprite at controlled sizes and opacity.
+        mc.level.addParticle(data.perfect() ? GuardParticles.PERFECT_FLASH.get() : GuardParticles.PARRY_FLASH.get(),
+            data.x(), data.y(), data.z(), 0, 0, 0);
+        if (data.perfect()) {
+            // Particle Interactions' separate star sprites accompany only perfect parries.
+            for (int i = 0; i < 12; i++) {
+                double x = data.x() + (mc.level.random.nextDouble() - 0.5D) * 0.36D;
+                double y = data.y() + (mc.level.random.nextDouble() - 0.5D) * 0.30D;
+                double z = data.z() + (mc.level.random.nextDouble() - 0.5D) * 0.36D;
+                mc.level.addParticle(GuardParticles.SPARK_FLASH.get(), x, y, z, 0, 0, 0);
+            }
+        }
+        double angleOffset = mc.level.random.nextDouble() * Math.PI * 2.0D;
+        for (int i = 0; i < data.count(); i++) {
+            double angle = angleOffset + Math.PI * 2.0D * i / data.count();
+            double dx = Math.cos(angle) * 0.08D + (mc.level.random.nextDouble() - 0.5D) * 0.32D;
+            double dz = Math.sin(angle) * 0.08D + (mc.level.random.nextDouble() - 0.5D) * 0.32D;
+            // One anvil-style spray per hit. The old three delayed emissions
+            // made a single parry look as though the effect had played twice.
+            double x = data.x() + dx + (mc.level.random.nextDouble() - 0.5D) * 0.25D;
+            double z = data.z() + dz + (mc.level.random.nextDouble() - 0.5D) * 0.25D;
+            double vx = Math.clamp(dx, -1.0D, 1.0D) * 2.5D;
+            double vz = Math.clamp(dz, -1.0D, 1.0D) * 2.5D;
+            double vy = 0.4D * (0.24D + Math.max(Math.abs(dx), Math.abs(dz)));
+            mc.level.addParticle(GuardParticles.FLYING_SPARK.get(), x, data.y(), z, vx, vy, vz);
+        }
+    }
+
+    @SubscribeEvent
+    public static void cameraShake(ViewportEvent.ComputeCameraAngles event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.getConnection() == null || !GuardConfig.SCREEN_SHAKE.get() || GuardConfig.SHAKE_STRENGTH.get() == 0) return;
+        long age = System.currentTimeMillis() - resultStartMs;
+        if (hitResult == 0 || age < 0 || age >= 320) return;
+        float resultScale = hitResult == 3 ? 1.4F : hitResult == 2 ? 1.0F : 0.55F;
+        float amplitude = resultScale * GuardConfig.SHAKE_STRENGTH.get() / 100.0F * (1.0F - age / 320.0F);
+        event.setRoll(event.getRoll() + (float) Math.sin(age * 0.095D) * 2.5F * amplitude);
+        event.setPitch(event.getPitch() + (float) Math.sin(age * 0.135D) * 1.4F * amplitude);
     }
 
     @SubscribeEvent
@@ -120,41 +164,45 @@ public final class GuardClient {
         if (mc.player == null || mc.options.hideGui) return;
         int crosshairX = (event.getGuiGraphics().guiWidth() - 15) / 2;
         int crosshairY = (event.getGuiGraphics().guiHeight() - 15) / 2;
-        int shieldX = crosshairX + (15 - 8) / 2;
-        int shieldY = crosshairY + 15 + 2;
+        int shieldSize = 18;
+        float shieldCenterX = crosshairX + 7.5F;
+        float shieldCenterY = crosshairY + 15 + 2 + shieldSize / 2.0F;
         long resultAge = System.currentTimeMillis() - resultStartMs;
-        if (GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0 && hitResult != 0 && resultAge >= 0 && resultAge < 260) {
+        if (GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0 && (hitResult == 1 || hitResult == 2) && resultAge >= 0 && resultAge < 260) {
             renderScreenFlash(event.getGuiGraphics(), resultAge);
-            // Commit the screen fill and rings before submitting the echo and shield textures.
+            // Commit the white screen flash before submitting the echo and shield textures.
             event.getGuiGraphics().flush();
+        }
+        if (GuardConfig.SHIELD_EFFECTS.get() && hitResult == 3 && resultAge >= 0 && resultAge < FLASH_DURATION_MS) {
+            renderBlockVignette(event.getGuiGraphics(), resultAge);
         }
         if (!GuardConfig.HUD.get()) return;
         boolean showingResult = resultVisible();
         if (phase == 0 && recharge == 0 && !showingResult) return;
         float progress = showingResult ? Math.min(1.0F, resultAge / (float) FLASH_DURATION_MS) : 1.0F;
-        float expansion = hitResult == 2 ? 0.58F : hitResult == 1 ? 0.30F : 0.18F;
+        float expansion = hitResult == 2 ? 0.82F : hitResult == 1 ? 0.30F : 0.18F;
         float pulse = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(Math.PI * progress) * expansion : 0.0F;
-        float shakeStrength = hitResult == 2 ? 2.2F : 1.1F;
+        float shakeStrength = hitResult == 2 ? 3.5F : 1.1F;
         float shake = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.13D) * shakeStrength * (1.0F - progress) : 0.0F;
-        float verticalShake = showingResult && hitResult == 2 && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.18D) * 0.8F * (1.0F - progress) : 0.0F;
+        float verticalShake = showingResult && hitResult == 2 && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.18D) * 1.3F * (1.0F - progress) : 0.0F;
         boolean draining = phase == 1 || phase == 2;
         event.getGuiGraphics().pose().pushPose();
-        event.getGuiGraphics().pose().translate(shieldX + 4, shieldY + 4, 0);
+        event.getGuiGraphics().pose().translate(shieldCenterX, shieldCenterY, 0);
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         if (showingResult && hitResult == 2 && resultAge < ECHO_DURATION_MS) {
             float echoProgress = resultAge / (float) ECHO_DURATION_MS;
-            float echoScale = 0.25F * (1.0F + 1.65F * echoProgress);
+            float echoScale = shieldSize / 32.0F * (1.0F + 3.15F * echoProgress);
             event.getGuiGraphics().pose().pushPose();
             event.getGuiGraphics().pose().scale(echoScale, echoScale, 1.0F);
             event.getGuiGraphics().pose().translate(-16, -16, 0);
-            RenderSystem.setShaderColor(1.0F, 0.78F, 0.16F, 0.22F * (1.0F - echoProgress));
+            RenderSystem.setShaderColor(1.0F, 0.78F, 0.16F, 0.52F * (1.0F - echoProgress));
             event.getGuiGraphics().blit(FLASH_MASK, 0, 0, 0, 0, 32, 32, 32, 32);
             RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
             event.getGuiGraphics().pose().popPose();
         }
         event.getGuiGraphics().pose().translate(shake, verticalShake, 0);
-        float iconScale = 0.25F * (1.0F + pulse);
+        float iconScale = shieldSize / 32.0F * (1.0F + pulse);
         event.getGuiGraphics().pose().scale(iconScale, iconScale, 1.0F);
         event.getGuiGraphics().pose().translate(-16, -16, 0);
         RenderSystem.setShaderColor(0.24f, 0.24f, 0.24f, 1f);
@@ -191,33 +239,26 @@ public final class GuardClient {
         event.getGuiGraphics().pose().popPose();
     }
 
-    private static void renderScreenFlash(net.minecraft.client.gui.GuiGraphics graphics, long age) {
-        float progress = age / 260.0F;
-        float intensity = GuardConfig.FLASH_STRENGTH.get() / 100.0F * (hitResult == 2 ? 1.0F : hitResult == 1 ? 0.82F : 0.55F);
-        int alpha = Math.round(255.0F * 0.85F * (1.0F - progress) * intensity);
-        graphics.fill(0, 0, graphics.guiWidth(), graphics.guiHeight(), alpha << 24 | 0xFFFFFF);
-        // Parry It-style white flash with two expanding, fading warm-gold rings.
-        if (progress < 0.85F) {
-            float ringProgress = progress / 0.85F;
-            renderRing(graphics, ringProgress * 1.45F, intensity * 0.55F, 5.0F, 34.0F);
-            renderRing(graphics, ringProgress, intensity, 8.0F, 58.0F);
+    private static void renderBlockVignette(net.minecraft.client.gui.GuiGraphics graphics, long age) {
+        float fade = 1.0F - age / (float) FLASH_DURATION_MS;
+        int width = graphics.guiWidth(), height = graphics.guiHeight();
+        int step = Math.max(6, Math.min(width, height) / 28);
+        for (int i = 0; i < 4; i++) {
+            int inset = i * step;
+            int alpha = Math.round((14 - i * 2.5F) * fade);
+            int color = alpha << 24 | 0x15080B;
+            graphics.fill(inset, inset, width - inset, inset + step, color);
+            graphics.fill(inset, height - inset - step, width - inset, height - inset, color);
+            graphics.fill(inset, inset + step, inset + step, height - inset - step, color);
+            graphics.fill(width - inset - step, inset + step, width - inset, height - inset - step, color);
         }
     }
 
-    private static void renderRing(net.minecraft.client.gui.GuiGraphics graphics, float progress, float intensity, float startRadius, float endRadius) {
-        if (progress >= 1.0F) return;
-        float radius = startRadius + (endRadius - startRadius) * (1.0F - (1.0F - progress) * (1.0F - progress));
-        int alpha = Math.round(160.0F * intensity * (1.0F - progress));
-        int color = alpha << 24 | 0xFFC24A;
-        graphics.pose().pushPose();
-        graphics.pose().translate(graphics.guiWidth() / 2.0F, graphics.guiHeight() / 2.0F, 0);
-        for (int segment = 0; segment < 44; segment++) {
-            graphics.pose().pushPose();
-            graphics.pose().mulPose(new Quaternionf().rotationZ((float) (segment * Math.PI * 2.0D / 44.0D)));
-            int halfWidth = Math.max(1, Math.round((float) (Math.PI * radius / 44.0D)));
-            graphics.fill(Math.round(radius), -halfWidth, Math.round(radius + 2.0F), halfWidth, color);
-            graphics.pose().popPose();
-        }
-        graphics.pose().popPose();
+    private static void renderScreenFlash(net.minecraft.client.gui.GuiGraphics graphics, long age) {
+        float progress = age / 260.0F;
+        float intensity = GuardConfig.FLASH_STRENGTH.get() / 100.0F * (hitResult == 2 ? 1.0F : 0.82F);
+        int alpha = Math.round(255.0F * 0.85F * (1.0F - progress) * intensity);
+        graphics.fill(0, 0, graphics.guiWidth(), graphics.guiHeight(), alpha << 24 | 0xFFFFFF);
     }
+
 }
