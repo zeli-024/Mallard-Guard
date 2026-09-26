@@ -54,7 +54,7 @@ public final class GuardState {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
         GuardState state = STATES.get(player.getUUID());
         if (state == null) return;
-        if (state.recharge > 0) state.recharge--;
+        if (state.recharge > 0 && state.phase != 3) state.recharge--;
         if (state.held) {
             if (!eligible(player) || state.heldItem != player.getMainHandItem()) {
                 state.held = false;
@@ -63,7 +63,8 @@ public final class GuardState {
                 state.elapsed++;
                 if (state.elapsed >= GuardConfig.PARRY_TICKS.get()) {
                     state.phase = GuardConfig.BLOCK.get() ? 3 : 0;
-                    if (state.phase == 0) state.held = false;
+                    if (state.phase == 3) state.recharge = GuardConfig.RECHARGE_TICKS.get();
+                    else state.held = false;
                 } else if (state.elapsed >= GuardConfig.PERFECT_TICKS.get()) {
                     state.phase = 2;
                 }

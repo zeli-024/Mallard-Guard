@@ -55,21 +55,21 @@ public final class GuardClient {
     @SubscribeEvent
     public static void render(RenderGuiEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get() || phase == 3) return;
+        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get()) return;
+        if (phase == 0 && recharge == 0) return;
         float fraction = phase == 1 || phase == 2
             ? 1f - (float) elapsed / Math.max(1, window)
-            : recharge > 0 ? 1f - (float) recharge / Math.max(1, rechargeMax) : 0f;
-        if (phase == 0 && recharge == 0) return;
-        int x = event.getGuiGraphics().guiWidth() / 2 - 8;
+            : phase == 3 ? 0f : 1f - (float) recharge / Math.max(1, rechargeMax);
+        int x = event.getGuiGraphics().guiWidth() / 2 - 6;
         int y = event.getGuiGraphics().guiHeight() / 2 + 12;
         event.getGuiGraphics().pose().pushPose();
         event.getGuiGraphics().pose().translate(x, y, 0);
-        event.getGuiGraphics().pose().scale(0.5f, 0.5f, 1f);
-        event.getGuiGraphics().blit(FADED, 0, 0, 0, 0, 32, 32, 32, 32);
-        int height = Math.min(16, Math.max(0, Math.round(fraction * 16)));
-        if (height > 0) {
-            event.getGuiGraphics().enableScissor(x, y + 16 - height, x + 16, y + 16);
-            event.getGuiGraphics().blit(FILLED, 0, 0, 0, 0, 32, 32, 32, 32);
+        event.getGuiGraphics().pose().scale(0.375f, 0.375f, 1f);
+        event.getGuiGraphics().blit(FILLED, 0, 0, 0, 0, 32, 32, 32, 32);
+        int width = Math.min(12, Math.max(0, Math.round(fraction * 12)));
+        if (width > 0) {
+            event.getGuiGraphics().enableScissor(x, y, x + width, y + 12);
+            event.getGuiGraphics().blit(FADED, 0, 0, 0, 0, 32, 32, 32, 32);
             event.getGuiGraphics().disableScissor();
         }
         event.getGuiGraphics().pose().popPose();
