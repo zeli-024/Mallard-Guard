@@ -1,0 +1,71 @@
+package dev.zeli.mallardguard;
+
+import dev.zeli.mallardguard.client.GuardClient;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+import net.neoforged.neoforge.network.PacketDistributor;
+
+public final class GuardPackets {
+    private GuardPackets() {}
+
+    public record Input(boolean pressed) implements CustomPacketPayload {
+        public static final Type<Input> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "input"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, Input> CODEC = StreamCodec.of(
+            (buf, data) -> buf.writeBoolean(data.pressed), buf -> new Input(buf.readBoolean()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    public record Status(int phase, int elapsed, int recharge, int window, int rechargeMax) implements CustomPacketPayload {
+        public static final Type<Status> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "status"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, Status> CODEC = StreamCodec.of(
+            (buf, data) -> { buf.writeVarInt(data.phase); buf.writeVarInt(data.elapsed); buf.writeVarInt(data.recharge); buf.writeVarInt(data.window); buf.writeVarInt(data.rechargeMax); },
+            buf -> new Status(buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    public record Settings(boolean parry, boolean block, int perfect, int window, int recharge, boolean operator) implements CustomPacketPayload {
+        public static final Type<Settings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "settings"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, Settings> CODEC = StreamCodec.of(
+            (buf, data) -> {
+                buf.writeBoolean(data.parry); buf.writeBoolean(data.block);
+                buf.writeVarInt(data.perfect); buf.writeVarInt(data.window); buf.writeVarInt(data.recharge);
+                buf.writeBoolean(data.operator);
+            },
+            buf -> new Settings(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readBoolean()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    public record Save(boolean parry, boolean block, int perfect, int window, int recharge) implements CustomPacketPayload {
+        public static final Type<Save> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "save"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, Save> CODEC = StreamCodec.of(
+            (buf, data) -> {
+                buf.writeBoolean(data.parry); buf.writeBoolean(data.block);
+                buf.writeVarInt(data.perfect); buf.writeVarInt(data.window); buf.writeVarInt(data.recharge);
+            },
+            buf -> new Save(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar("1");
+        registrar.playToServer(Input.TYPE, Input.CODEC, (data, context) -> {
+            if (context.player() instanceof ServerPlayer player) GuardState.input(player, data.pressed());
+        });
+        registrar.playToServer(Save.TYPE, Save.CODEC, GuardPackets::save);
+        registrar.playToClient(Status.TYPE, Status.CODEC, (data, context) -> GuardClient.status(data));
+        registrar.playToClient(Settings.TYPE, Settings.CODEC, (data, context) -> GuardClient.settings(data));
+    }
+
+    private static void save(Save data, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player) || !player.hasPermissions(2)) return;
+        if (data.perfect() < 0 || data.perfect() > 5 || data.window() < 1 || data.window() > 10
+            || data.recharge() < 1 || data.recharge() > 60) return;
+        GuardConfig.apply(new Settings(data.parry(), data.block(), data.perfect(), data.window(), data.recharge(), true));
+    }
+}
