@@ -24,6 +24,9 @@ public final class GuardClient {
     private static int recharge;
     private static int window = 7;
     private static int rechargeMax = 12;
+    private static int hitResult;
+    private static int resultTicks;
+    private static final int RESULT_DURATION = 18;
 
     private GuardClient() {}
 
@@ -48,14 +51,22 @@ public final class GuardClient {
         Minecraft.getInstance().setScreen(new GuardConfigScreen(data));
     }
 
+    public static void hitResult(GuardPackets.HitResult data) {
+        if (data.result() < 1 || data.result() > 3) return;
+        hitResult = data.result();
+        resultTicks = RESULT_DURATION;
+    }
+
     @SubscribeEvent
     public static void tick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.getConnection() == null) {
             wasDown = false;
             phase = recharge = 0;
+            hitResult = resultTicks = 0;
             return;
         }
+        if (resultTicks > 0) resultTicks--;
         boolean down = mc.screen == null && mc.options.keyUse.isDown();
         if (down != wasDown) {
             wasDown = down;
@@ -66,7 +77,24 @@ public final class GuardClient {
     @SubscribeEvent
     public static void render(RenderGuiEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get()) return;
+        if (mc.player == null || mc.options.hideGui) return;
+        if (GuardConfig.RESULT_TEXT.get() && resultTicks > 0) {
+            String message = switch (hitResult) {
+                case 1 -> "PARRY";
+                case 2 -> "PERFECT PARRY";
+                case 3 -> "BLOCK";
+                default -> "";
+            };
+            int rgb = switch (hitResult) {
+                case 2 -> 0xEFD99C;
+                case 3 -> 0xBACAD0;
+                default -> 0xBCE2C7;
+            };
+            int alpha = Math.min(255, resultTicks * 255 / 7);
+            int y = event.getGuiGraphics().guiHeight() / 2 - 31 - (RESULT_DURATION - resultTicks) / 4;
+            event.getGuiGraphics().drawCenteredString(mc.font, message, event.getGuiGraphics().guiWidth() / 2, y, (alpha << 24) | rgb);
+        }
+        if (!GuardConfig.HUD.get()) return;
         if (phase == 0 && recharge == 0) return;
         boolean draining = phase == 1 || phase == 2;
         int x = event.getGuiGraphics().guiWidth() / 2 - 4;

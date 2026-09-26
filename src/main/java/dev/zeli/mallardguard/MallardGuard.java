@@ -44,6 +44,7 @@ public final class MallardGuard {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
         GuardState.Result result = GuardState.handleHit(player, event.getSource());
         if (result == GuardState.Result.PERFECT || result == GuardState.Result.PARRY) {
+            PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : 1));
             GuardState.wear(player, result);
             event.setCanceled(true);
             if (event.getSource().getEntity() instanceof LivingEntity attacker && attacker != player) {
@@ -60,6 +61,7 @@ public final class MallardGuard {
             return;
         }
         if (result == GuardState.Result.BLOCK) {
+            PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(3));
             GuardState.wear(player, result);
             event.setAmount(event.getAmount() * (1.0F - GuardConfig.BLOCK_REDUCTION.get().floatValue()));
         }

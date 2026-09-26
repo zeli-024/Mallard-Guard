@@ -29,6 +29,13 @@ public final class GuardPackets {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    public record HitResult(int result) implements CustomPacketPayload {
+        public static final Type<HitResult> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "hit_result"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, HitResult> CODEC = StreamCodec.of(
+            (buf, data) -> buf.writeVarInt(data.result), buf -> new HitResult(buf.readVarInt()));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record Settings(boolean parry, boolean block, int perfect, int window, int recharge, int angle, int reductionPercent, int followUp, int parryReturnPercent, int perfectReturnPercent, int parryWear, int perfectWear, int blockWear, int addedDurability, boolean operator) implements CustomPacketPayload {
         public static final Type<Settings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "settings"));
         public static final StreamCodec<RegistryFriendlyByteBuf, Settings> CODEC = StreamCodec.of(
@@ -81,6 +88,7 @@ public final class GuardPackets {
         });
         registrar.playToServer(Save.TYPE, Save.CODEC, GuardPackets::save);
         registrar.playToClient(Status.TYPE, Status.CODEC, (data, context) -> GuardClient.status(data));
+        registrar.playToClient(HitResult.TYPE, HitResult.CODEC, (data, context) -> GuardClient.hitResult(data));
         registrar.playToClient(Settings.TYPE, Settings.CODEC, (data, context) -> GuardClient.settings(data));
     }
 
