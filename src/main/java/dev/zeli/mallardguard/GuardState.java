@@ -11,6 +11,9 @@ import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.phys.Vec3;
 
 public final class GuardState {
     private static final Map<UUID, GuardState> STATES = new HashMap<>();
@@ -19,6 +22,8 @@ public final class GuardState {
     private int recharge;
     private int phase;
     private ItemStack heldItem = ItemStack.EMPTY;
+
+    public enum Result { NONE, PERFECT, PARRY, BLOCK }
 
     private GuardState() {}
 
@@ -71,6 +76,31 @@ public final class GuardState {
             }
         }
         sync(player, state);
+    }
+
+    public static Result handleHit(ServerPlayer player, DamageSource source) {
+        GuardState state = STATES.get(player.getUUID());
+        if (state == null || state.phase == 0 || !eligible(player) || !inAngle(player, source)) return Result.NONE;
+        Result result = state.phase == 1 ? Result.PERFECT : state.phase == 2 ? Result.PARRY : Result.BLOCK;
+        if (result == Result.PERFECT) state.recharge = 0;
+        else if (result == Result.PARRY) state.recharge = Math.max(0, GuardConfig.RECHARGE_TICKS.get() / 2);
+        if (result == Result.PERFECT || result == Result.PARRY) {
+            state.held = false;
+            state.phase = 0;
+            state.elapsed = 0;
+        }
+        sync(player, state);
+        return result;
+    }
+
+    private static boolean inAngle(ServerPlayer player, DamageSource source) {
+        if (GuardConfig.FACING_ANGLE.get() >= 360) return true;
+        if (!(source.getEntity() instanceof LivingEntity attacker)) return false;
+        if (player.distanceTo(attacker) > 4.0D) return false;
+        Vec3 offset = attacker.position().subtract(player.position());
+        if (offset.lengthSqr() < 1.0E-8D) return true;
+        double dot = player.getLookAngle().normalize().dot(offset.normalize());
+        return dot >= Math.cos(Math.toRadians(GuardConfig.FACING_ANGLE.get() / 2.0D));
     }
 
     private static void sync(ServerPlayer player, GuardState state) {

@@ -17,6 +17,8 @@ public final class GuardConfigScreen extends Screen {
     private int perfect;
     private int window;
     private int recharge;
+    private int angle;
+    private int reductionPercent;
 
     public GuardConfigScreen(GuardPackets.Settings settings) {
         super(Component.literal("Mallard Guard"));
@@ -26,13 +28,15 @@ public final class GuardConfigScreen extends Screen {
         perfect = settings.perfect();
         window = settings.window();
         recharge = settings.recharge();
+        angle = settings.angle();
+        reductionPercent = settings.reductionPercent();
         hud = GuardConfig.HUD.get();
     }
 
     @Override
     protected void init() {
         int left = width / 2 - 110;
-        int top = height / 2 - 98;
+        int top = height / 2 - 118;
         Button parryButton = addRenderableWidget(Button.builder(label("Parry", parry), b -> {
             parry = !parry;
             b.setMessage(label("Parry", parry));
@@ -44,13 +48,15 @@ public final class GuardConfigScreen extends Screen {
         Slider perfectSlider = addRenderableWidget(new Slider(left, top + 54, 220, "Perfect window", perfect, 0, 5, value -> perfect = value));
         Slider windowSlider = addRenderableWidget(new Slider(left, top + 78, 220, "Parry window", window, 1, 10, value -> window = value));
         Slider rechargeSlider = addRenderableWidget(new Slider(left, top + 102, 220, "Recharge", recharge, 1, 60, value -> recharge = value));
-        parryButton.active = blockButton.active = perfectSlider.active = windowSlider.active = rechargeSlider.active = operator;
+        Slider angleSlider = addRenderableWidget(new Slider(left, top + 126, 220, "Facing angle", angle, 0, 360, value -> angle = value));
+        Slider reductionSlider = addRenderableWidget(new Slider(left, top + 150, 220, "Block reduction", reductionPercent, 0, 100, value -> reductionPercent = value));
+        parryButton.active = blockButton.active = perfectSlider.active = windowSlider.active = rechargeSlider.active = angleSlider.active = reductionSlider.active = operator;
         addRenderableWidget(Button.builder(label("Crosshair shield", hud), b -> {
             hud = !hud;
             b.setMessage(label("Crosshair shield", hud));
-        }).bounds(left, top + 148, 220, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("Save & close"), b -> save()).bounds(left, top + 175, 105, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose()).bounds(left + 115, top + 175, 105, 20).build());
+        }).bounds(left, top + 174, 220, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("Save & close"), b -> save()).bounds(left, top + 201, 105, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose()).bounds(left + 115, top + 201, 105, 20).build());
     }
 
     private static Component label(String name, boolean value) {
@@ -60,7 +66,7 @@ public final class GuardConfigScreen extends Screen {
     private void save() {
         GuardConfig.HUD.set(hud);
         GuardConfig.CLIENT_SPEC.save();
-        if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, perfect, window, recharge));
+        if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, perfect, window, recharge, angle, reductionPercent));
         onClose();
     }
 
@@ -68,7 +74,7 @@ public final class GuardConfigScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         super.render(graphics, mouseX, mouseY, delta);
         int left = width / 2 - 110;
-        int top = height / 2 - 98;
+        int top = height / 2 - 118;
         graphics.drawCenteredString(font, title, width / 2, top + 3, 0xFFFFFF);
         graphics.drawString(font, operator ? "Server gameplay" : "Server gameplay (operator only)", left, top + 16, 0xAAAAAA);
         graphics.drawString(font, "Client display", left, top + 136, 0xAAAAAA);

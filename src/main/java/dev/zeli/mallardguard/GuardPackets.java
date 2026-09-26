@@ -29,26 +29,26 @@ public final class GuardPackets {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record Settings(boolean parry, boolean block, int perfect, int window, int recharge, boolean operator) implements CustomPacketPayload {
+    public record Settings(boolean parry, boolean block, int perfect, int window, int recharge, int angle, int reductionPercent, boolean operator) implements CustomPacketPayload {
         public static final Type<Settings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "settings"));
         public static final StreamCodec<RegistryFriendlyByteBuf, Settings> CODEC = StreamCodec.of(
             (buf, data) -> {
                 buf.writeBoolean(data.parry); buf.writeBoolean(data.block);
-                buf.writeVarInt(data.perfect); buf.writeVarInt(data.window); buf.writeVarInt(data.recharge);
+                buf.writeVarInt(data.perfect); buf.writeVarInt(data.window); buf.writeVarInt(data.recharge); buf.writeVarInt(data.angle); buf.writeVarInt(data.reductionPercent);
                 buf.writeBoolean(data.operator);
             },
-            buf -> new Settings(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readBoolean()));
+            buf -> new Settings(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readBoolean()));
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record Save(boolean parry, boolean block, int perfect, int window, int recharge) implements CustomPacketPayload {
+    public record Save(boolean parry, boolean block, int perfect, int window, int recharge, int angle, int reductionPercent) implements CustomPacketPayload {
         public static final Type<Save> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "save"));
         public static final StreamCodec<RegistryFriendlyByteBuf, Save> CODEC = StreamCodec.of(
             (buf, data) -> {
                 buf.writeBoolean(data.parry); buf.writeBoolean(data.block);
-                buf.writeVarInt(data.perfect); buf.writeVarInt(data.window); buf.writeVarInt(data.recharge);
+                buf.writeVarInt(data.perfect); buf.writeVarInt(data.window); buf.writeVarInt(data.recharge); buf.writeVarInt(data.angle); buf.writeVarInt(data.reductionPercent);
             },
-            buf -> new Save(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt()));
+            buf -> new Save(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt()));
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
@@ -65,7 +65,8 @@ public final class GuardPackets {
     private static void save(Save data, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player) || !player.hasPermissions(2)) return;
         if (data.perfect() < 0 || data.perfect() > 5 || data.window() < 1 || data.window() > 10
-            || data.recharge() < 1 || data.recharge() > 60) return;
-        GuardConfig.apply(new Settings(data.parry(), data.block(), data.perfect(), data.window(), data.recharge(), true));
+            || data.recharge() < 1 || data.recharge() > 60 || data.angle() < 0 || data.angle() > 360
+            || data.reductionPercent() < 0 || data.reductionPercent() > 100) return;
+        GuardConfig.apply(new Settings(data.parry(), data.block(), data.perfect(), data.window(), data.recharge(), data.angle(), data.reductionPercent(), true));
     }
 }
