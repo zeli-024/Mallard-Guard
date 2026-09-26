@@ -1,5 +1,6 @@
 package dev.zeli.mallardguard.client;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.GuardPackets;
 import dev.zeli.mallardguard.MallardGuard;
@@ -58,12 +59,16 @@ public final class GuardClient {
         if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get()) return;
         if (phase == 0 && recharge == 0) return;
         boolean draining = phase == 1 || phase == 2;
-        int x = event.getGuiGraphics().guiWidth() / 2 - 5;
+        int x = event.getGuiGraphics().guiWidth() / 2 - 4;
         int y = event.getGuiGraphics().guiHeight() / 2 + 12;
         event.getGuiGraphics().pose().pushPose();
         event.getGuiGraphics().pose().translate(x, y, 0);
-        event.getGuiGraphics().pose().scale(0.3125f, 0.3125f, 1f);
+        event.getGuiGraphics().pose().scale(0.25f, 0.25f, 1f);
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.setShaderColor(0.24f, 0.24f, 0.24f, 1f);
         event.getGuiGraphics().blit(BACKGROUND, 0, 0, 0, 0, 32, 32, 32, 32);
+        RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
         if (draining) {
             int removed = Math.min(32, Math.max(0, Math.round(32f * elapsed / Math.max(1, window))));
             if (removed < 32) {
@@ -75,6 +80,7 @@ public final class GuardClient {
                 event.getGuiGraphics().blit(ANIMATED, 0, 0, 0, 0, filled, 32, 32, 32);
             }
         }
+        RenderSystem.disableBlend();
         event.getGuiGraphics().pose().popPose();
     }
 }
