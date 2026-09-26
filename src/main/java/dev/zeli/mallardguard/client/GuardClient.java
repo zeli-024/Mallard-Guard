@@ -14,8 +14,8 @@ import net.neoforged.bus.api.SubscribeEvent;
 
 @EventBusSubscriber(modid = MallardGuard.ID, value = Dist.CLIENT)
 public final class GuardClient {
-    private static final ResourceLocation SOLID = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield_full.png");
-    private static final ResourceLocation TRANSLUCENT = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield_faded.png");
+    private static final ResourceLocation BACKGROUND = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/backgroundlayer.png");
+    private static final ResourceLocation ANIMATED = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/animatedlayer.png");
     private static boolean wasDown;
     private static int phase;
     private static int elapsed;
@@ -58,18 +58,22 @@ public final class GuardClient {
         if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get()) return;
         if (phase == 0 && recharge == 0) return;
         boolean draining = phase == 1 || phase == 2;
-        int x = event.getGuiGraphics().guiWidth() / 2 - 6;
+        int x = event.getGuiGraphics().guiWidth() / 2 - 5;
         int y = event.getGuiGraphics().guiHeight() / 2 + 12;
         event.getGuiGraphics().pose().pushPose();
         event.getGuiGraphics().pose().translate(x, y, 0);
-        event.getGuiGraphics().pose().scale(0.375f, 0.375f, 1f);
-        event.getGuiGraphics().blit(TRANSLUCENT, 0, 0, 0, 0, 32, 32, 32, 32);
-        int fromX = draining ? x + Math.min(12, Math.max(0, Math.round(12f * elapsed / Math.max(1, window)))) : x;
-        int toX = draining ? x + 12 : x + Math.min(12, Math.max(0, Math.round(12f * (1f - (float) recharge / Math.max(1, rechargeMax)))));
-        if (phase != 3 && fromX < toX) {
-            event.getGuiGraphics().enableScissor(fromX, y, toX, y + 12);
-            event.getGuiGraphics().blit(SOLID, 0, 0, 0, 0, 32, 32, 32, 32);
-            event.getGuiGraphics().disableScissor();
+        event.getGuiGraphics().pose().scale(0.3125f, 0.3125f, 1f);
+        event.getGuiGraphics().blit(BACKGROUND, 0, 0, 0, 0, 32, 32, 32, 32);
+        if (draining) {
+            int removed = Math.min(32, Math.max(0, Math.round(32f * elapsed / Math.max(1, window))));
+            if (removed < 32) {
+                event.getGuiGraphics().blit(ANIMATED, removed, 0, removed, 0, 32 - removed, 32, 32, 32);
+            }
+        } else if (phase != 3) {
+            int filled = Math.min(32, Math.max(0, Math.round(32f * (1f - (float) recharge / Math.max(1, rechargeMax)))));
+            if (filled > 0) {
+                event.getGuiGraphics().blit(ANIMATED, 0, 0, 0, 0, filled, 32, 32, 32);
+            }
         }
         event.getGuiGraphics().pose().popPose();
     }
