@@ -14,8 +14,8 @@ import net.neoforged.bus.api.SubscribeEvent;
 
 @EventBusSubscriber(modid = MallardGuard.ID, value = Dist.CLIENT)
 public final class GuardClient {
-    private static final ResourceLocation FILLED = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield_full.png");
-    private static final ResourceLocation FADED = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield_faded.png");
+    private static final ResourceLocation SOLID = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield_full.png");
+    private static final ResourceLocation TRANSLUCENT = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield_faded.png");
     private static boolean wasDown;
     private static int phase;
     private static int elapsed;
@@ -57,19 +57,18 @@ public final class GuardClient {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get()) return;
         if (phase == 0 && recharge == 0) return;
-        float fraction = phase == 1 || phase == 2
-            ? 1f - (float) elapsed / Math.max(1, window)
-            : phase == 3 ? 0f : 1f - (float) recharge / Math.max(1, rechargeMax);
+        boolean draining = phase == 1 || phase == 2;
         int x = event.getGuiGraphics().guiWidth() / 2 - 6;
         int y = event.getGuiGraphics().guiHeight() / 2 + 12;
         event.getGuiGraphics().pose().pushPose();
         event.getGuiGraphics().pose().translate(x, y, 0);
         event.getGuiGraphics().pose().scale(0.375f, 0.375f, 1f);
-        event.getGuiGraphics().blit(FILLED, 0, 0, 0, 0, 32, 32, 32, 32);
-        int width = Math.min(12, Math.max(0, Math.round(fraction * 12)));
-        if (width > 0) {
-            event.getGuiGraphics().enableScissor(x, y, x + width, y + 12);
-            event.getGuiGraphics().blit(FADED, 0, 0, 0, 0, 32, 32, 32, 32);
+        event.getGuiGraphics().blit(TRANSLUCENT, 0, 0, 0, 0, 32, 32, 32, 32);
+        int fromX = draining ? x + Math.min(12, Math.max(0, Math.round(12f * elapsed / Math.max(1, window)))) : x;
+        int toX = draining ? x + 12 : x + Math.min(12, Math.max(0, Math.round(12f * (1f - (float) recharge / Math.max(1, rechargeMax)))));
+        if (phase != 3 && fromX < toX) {
+            event.getGuiGraphics().enableScissor(fromX, y, toX, y + 12);
+            event.getGuiGraphics().blit(SOLID, 0, 0, 0, 0, 32, 32, 32, 32);
             event.getGuiGraphics().disableScissor();
         }
         event.getGuiGraphics().pose().popPose();
