@@ -6,6 +6,7 @@ import dev.zeli.mallardguard.GuardPackets;
 import dev.zeli.mallardguard.MallardGuard;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
@@ -25,6 +26,15 @@ public final class GuardClient {
     private static int rechargeMax = 12;
 
     private GuardClient() {}
+
+    public static boolean isStanceActive() {
+        return phase != 0;
+    }
+
+    public static boolean isCurrentMainHand(ItemStack stack) {
+        Minecraft minecraft = Minecraft.getInstance();
+        return minecraft.player != null && !stack.isEmpty() && ItemStack.isSameItemSameComponents(stack, minecraft.player.getMainHandItem());
+    }
 
     public static void status(GuardPackets.Status data) {
         phase = data.phase();

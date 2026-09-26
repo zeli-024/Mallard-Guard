@@ -10,6 +10,9 @@ authors="z.eli_"
 description="A configurable parry and guard system."
 logoFile="mallardguard.png"
 
+[[mixins]]
+config="mallardguard.mixins.json"
+
 [[dependencies.mallardguard]]
 modId="neoforge"
 type="required"
