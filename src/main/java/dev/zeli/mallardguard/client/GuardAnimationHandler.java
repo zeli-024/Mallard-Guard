@@ -8,7 +8,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
-import net.minecraft.client.renderer.entity.player.PlayerRenderer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.player.Player;
@@ -18,7 +17,6 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderHandEvent;
-import net.neoforged.neoforge.client.event.RenderPlayerEvent;
 
 @EventBusSubscriber(modid = MallardGuard.ID, value = Dist.CLIENT)
 public final class GuardAnimationHandler {
@@ -52,17 +50,4 @@ public final class GuardAnimationHandler {
         event.setCanceled(true);
     }
 
-    @SubscribeEvent
-    public static void renderThirdPerson(RenderPlayerEvent.Pre event) {
-        Player player = event.getEntity();
-        if (!GuardClient.isStanceActive() || !dev.zeli.mallardguard.GuardState.eligible(player)) return;
-        HumanoidModel<?> model = (HumanoidModel<?>) event.getRenderer().getModel();
-        if (player.getMainArm() == HumanoidArm.RIGHT) {
-            model.rightArm.xRot -= (float) Math.PI * 2.0F / 10.0F;
-            model.rightArm.yRot = -(float) Math.PI / 6.0F;
-        } else {
-            model.leftArm.xRot -= (float) Math.PI * 2.0F / 10.0F;
-            model.leftArm.yRot = (float) Math.PI / 6.0F;
-        }
-    }
 }
