@@ -31,6 +31,7 @@ public final class GuardClient {
     private static int hitResult;
     private static long resultStartMs;
     private static final long FLASH_DURATION_MS = 420;
+    private static final long ECHO_DURATION_MS = 550;
     private static final long RESULT_HOLD_MS = 620;
     private static AttackIndicatorStatus savedAttackIndicator;
 
@@ -125,16 +126,31 @@ public final class GuardClient {
         if (phase == 0 && recharge == 0 && !showingResult) return;
         long resultAge = System.currentTimeMillis() - resultStartMs;
         float progress = showingResult ? Math.min(1.0F, resultAge / (float) FLASH_DURATION_MS) : 1.0F;
-        float pulse = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(Math.PI * progress) * 0.18F : 0.0F;
-        float shake = showingResult && resultAge < FLASH_DURATION_MS ? (float) (Math.sin(resultAge * 0.13D) * 1.1D * (1.0F - progress)) : 0.0F;
+        float expansion = hitResult == 2 ? 0.42F : hitResult == 1 ? 0.30F : 0.18F;
+        float pulse = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(Math.PI * progress) * expansion : 0.0F;
+        float shakeStrength = hitResult == 2 ? 2.2F : 1.1F;
+        float shake = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.13D) * shakeStrength * (1.0F - progress) : 0.0F;
+        float verticalShake = showingResult && hitResult == 2 && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.18D) * 0.8F * (1.0F - progress) : 0.0F;
         boolean draining = phase == 1 || phase == 2;
         event.getGuiGraphics().pose().pushPose();
-        event.getGuiGraphics().pose().translate(shieldX + 4 + shake, shieldY + 4, 0);
+        event.getGuiGraphics().pose().translate(shieldX + 4, shieldY + 4, 0);
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        if (showingResult && hitResult == 2 && resultAge < ECHO_DURATION_MS) {
+            float echoProgress = resultAge / (float) ECHO_DURATION_MS;
+            float echoScale = 0.25F * (1.0F + 1.35F * echoProgress);
+            event.getGuiGraphics().pose().pushPose();
+            event.getGuiGraphics().pose().scale(echoScale, echoScale, 1.0F);
+            event.getGuiGraphics().pose().translate(-16, -16, 0);
+            RenderSystem.setShaderColor(1.0F, 0.78F, 0.16F, 0.18F * (1.0F - echoProgress));
+            event.getGuiGraphics().blit(FLASH_MASK, 0, 0, 0, 0, 32, 32, 32, 32);
+            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+            event.getGuiGraphics().pose().popPose();
+        }
+        event.getGuiGraphics().pose().translate(shake, verticalShake, 0);
         float iconScale = 0.25F * (1.0F + pulse);
         event.getGuiGraphics().pose().scale(iconScale, iconScale, 1.0F);
         event.getGuiGraphics().pose().translate(-16, -16, 0);
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
         RenderSystem.setShaderColor(0.24f, 0.24f, 0.24f, 1f);
         event.getGuiGraphics().blit(BACKGROUND, 0, 0, 0, 0, 32, 32, 32, 32);
         RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
@@ -161,7 +177,7 @@ public final class GuardClient {
                 default -> 0xFFFFFF; // regular and follow-up parry: white
             };
             float fade = 1.0F - progress * progress;
-            RenderSystem.setShaderColor(((rgb >> 16) & 255) / 255.0F, ((rgb >> 8) & 255) / 255.0F, (rgb & 255) / 255.0F, 0.9F * fade);
+            RenderSystem.setShaderColor(((rgb >> 16) & 255) / 255.0F, ((rgb >> 8) & 255) / 255.0F, (rgb & 255) / 255.0F, 0.5F * fade);
             event.getGuiGraphics().blit(FLASH_MASK, 0, 0, 0, 0, 32, 32, 32, 32);
             RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
         }

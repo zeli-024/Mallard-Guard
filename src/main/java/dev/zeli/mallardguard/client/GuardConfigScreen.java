@@ -66,7 +66,7 @@ public final class GuardConfigScreen extends Screen {
             }).bounds(left, top + 188, 105, 20).build()), "Shows the small shield near the crosshair while parrying or recharging. Only changes your own display.");
             tip(addRenderableWidget(Button.builder(label("Shield effects", shieldEffects), b -> {
                 shieldEffects = !shieldEffects; b.setMessage(label("Shield effects", shieldEffects));
-            }).bounds(left + 115, top + 188, 105, 20).build()), "Flashes the shield gold for a perfect parry, white for a regular parry, or red for a held block. Also briefly shakes and grows it. Only changes your own display.");
+            }).bounds(left + 115, top + 188, 105, 20).build()), "Flashes the shield gold for a perfect parry, white for a regular parry, or red for a held block. The shield shakes and grows; perfect parries also send out a faint gold echo. Only changes your own display.");
         }
         addRenderableWidget(Button.builder(Component.literal("Save & close"), b -> save()).bounds(left, top + 213, 105, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose()).bounds(left + 115, top + 213, 105, 20).build());
