@@ -29,26 +29,48 @@ public final class GuardPackets {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record Settings(boolean parry, boolean block, int perfect, int window, int recharge, int angle, int reductionPercent, boolean operator) implements CustomPacketPayload {
+    public record Settings(boolean parry, boolean block, int perfect, int window, int recharge, int angle, int reductionPercent, int followUp, int parryReturnPercent, int perfectReturnPercent, int parryWear, int perfectWear, int blockWear, int addedDurability, boolean operator) implements CustomPacketPayload {
         public static final Type<Settings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "settings"));
         public static final StreamCodec<RegistryFriendlyByteBuf, Settings> CODEC = StreamCodec.of(
             (buf, data) -> {
                 buf.writeBoolean(data.parry); buf.writeBoolean(data.block);
-                buf.writeVarInt(data.perfect); buf.writeVarInt(data.window); buf.writeVarInt(data.recharge); buf.writeVarInt(data.angle); buf.writeVarInt(data.reductionPercent);
+                buf.writeVarInt(data.perfect);
+                buf.writeVarInt(data.window);
+                buf.writeVarInt(data.recharge);
+                buf.writeVarInt(data.angle);
+                buf.writeVarInt(data.reductionPercent);
+                buf.writeVarInt(data.followUp);
+                buf.writeVarInt(data.parryReturnPercent);
+                buf.writeVarInt(data.perfectReturnPercent);
+                buf.writeVarInt(data.parryWear);
+                buf.writeVarInt(data.perfectWear);
+                buf.writeVarInt(data.blockWear);
+                buf.writeVarInt(data.addedDurability);
                 buf.writeBoolean(data.operator);
             },
-            buf -> new Settings(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readBoolean()));
+            buf -> new Settings(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readBoolean()));
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record Save(boolean parry, boolean block, int perfect, int window, int recharge, int angle, int reductionPercent) implements CustomPacketPayload {
+    public record Save(boolean parry, boolean block, int perfect, int window, int recharge, int angle, int reductionPercent, int followUp, int parryReturnPercent, int perfectReturnPercent, int parryWear, int perfectWear, int blockWear, int addedDurability) implements CustomPacketPayload {
         public static final Type<Save> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "save"));
         public static final StreamCodec<RegistryFriendlyByteBuf, Save> CODEC = StreamCodec.of(
             (buf, data) -> {
                 buf.writeBoolean(data.parry); buf.writeBoolean(data.block);
-                buf.writeVarInt(data.perfect); buf.writeVarInt(data.window); buf.writeVarInt(data.recharge); buf.writeVarInt(data.angle); buf.writeVarInt(data.reductionPercent);
+                buf.writeVarInt(data.perfect);
+                buf.writeVarInt(data.window);
+                buf.writeVarInt(data.recharge);
+                buf.writeVarInt(data.angle);
+                buf.writeVarInt(data.reductionPercent);
+                buf.writeVarInt(data.followUp);
+                buf.writeVarInt(data.parryReturnPercent);
+                buf.writeVarInt(data.perfectReturnPercent);
+                buf.writeVarInt(data.parryWear);
+                buf.writeVarInt(data.perfectWear);
+                buf.writeVarInt(data.blockWear);
+                buf.writeVarInt(data.addedDurability);
             },
-            buf -> new Save(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt()));
+            buf -> new Save(buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt()));
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
@@ -66,7 +88,14 @@ public final class GuardPackets {
         if (!(context.player() instanceof ServerPlayer player) || !player.hasPermissions(2)) return;
         if (data.perfect() < 0 || data.perfect() > 5 || data.window() < 1 || data.window() > 10
             || data.recharge() < 1 || data.recharge() > 60 || data.angle() < 0 || data.angle() > 360
-            || data.reductionPercent() < 0 || data.reductionPercent() > 100) return;
-        GuardConfig.apply(new Settings(data.parry(), data.block(), data.perfect(), data.window(), data.recharge(), data.angle(), data.reductionPercent(), true));
+            || data.reductionPercent() < 0 || data.reductionPercent() > 100
+            || data.followUp() < 0 || data.followUp() > 20
+            || data.parryReturnPercent() < 0 || data.parryReturnPercent() > 300
+            || data.perfectReturnPercent() < 0 || data.perfectReturnPercent() > 300
+            || data.parryWear() < 0 || data.parryWear() > 100
+            || data.perfectWear() < 0 || data.perfectWear() > 100
+            || data.blockWear() < 0 || data.blockWear() > 100
+            || data.addedDurability() < 0 || data.addedDurability() > 10000) return;
+        GuardConfig.apply(new Settings(data.parry(), data.block(), data.perfect(), data.window(), data.recharge(), data.angle(), data.reductionPercent(), data.followUp(), data.parryReturnPercent(), data.perfectReturnPercent(), data.parryWear(), data.perfectWear(), data.blockWear(), data.addedDurability(), true));
     }
 }

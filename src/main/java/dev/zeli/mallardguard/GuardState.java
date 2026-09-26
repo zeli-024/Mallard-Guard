@@ -8,6 +8,7 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.minecraft.server.level.ServerPlayer;
@@ -22,6 +23,7 @@ public final class GuardState {
     private int recharge;
     private int phase;
     private ItemStack heldItem = ItemStack.EMPTY;
+    private long safetyThroughTick = -1;
 
     public enum Result { NONE, PERFECT, PARRY, BLOCK }
 
@@ -80,11 +82,15 @@ public final class GuardState {
 
     public static Result handleHit(ServerPlayer player, DamageSource source) {
         GuardState state = STATES.get(player.getUUID());
-        if (state == null || state.phase == 0 || !eligible(player) || !inAngle(player, source)) return Result.NONE;
+        if (state == null || !eligible(player) || !inAngle(player, source)) return Result.NONE;
+        // A successful parry closes the stance immediately; safety is a separate deadline.
+        if (state.phase == 0 && player.level().getGameTime() <= state.safetyThroughTick) return Result.PARRY;
+        if (state.phase == 0) return Result.NONE;
         Result result = state.phase == 1 ? Result.PERFECT : state.phase == 2 ? Result.PARRY : Result.BLOCK;
         if (result == Result.PERFECT) state.recharge = 0;
         else if (result == Result.PARRY) state.recharge = Math.max(0, GuardConfig.RECHARGE_TICKS.get() / 2);
         if (result == Result.PERFECT || result == Result.PARRY) {
+            state.safetyThroughTick = GuardConfig.FOLLOW_UP_TICKS.get() == 0 ? -1 : player.level().getGameTime() + GuardConfig.FOLLOW_UP_TICKS.get();
             state.held = false;
             state.phase = 0;
             state.elapsed = 0;
@@ -93,10 +99,37 @@ public final class GuardState {
         return result;
     }
 
+    public static void wear(ServerPlayer player, Result result) {
+        int base = switch (result) {
+            case PERFECT -> GuardConfig.PERFECT_WEAR.get();
+            case PARRY -> GuardConfig.PARRY_WEAR.get();
+            case BLOCK -> GuardConfig.BLOCK_WEAR.get();
+            default -> 0;
+        };
+        if (base <= 0) return;
+        ItemStack stack = player.getMainHandItem();
+        if (!stack.isDamageableItem() && !stack.has(DataComponents.UNBREAKABLE) && GuardConfig.ADDED_DURABILITY.get() > 0) {
+            if (stack.getCount() > 1) {
+                ItemStack remainder = stack.copy();
+                remainder.setCount(stack.getCount() - 1);
+                stack.setCount(1);
+                if (!player.getInventory().add(remainder) && !remainder.isEmpty()) player.drop(remainder, false);
+            }
+            stack.set(DataComponents.MAX_STACK_SIZE, 1);
+            stack.set(DataComponents.MAX_DAMAGE, GuardConfig.ADDED_DURABILITY.get());
+            stack.set(DataComponents.DAMAGE, 0);
+        }
+        if (!stack.isDamageableItem()) return;
+        // Fragile tools pay more, while durable tools still take at least base wear.
+        double scale = Math.min(4.0D, Math.max(1.0D, Math.sqrt(250.0D / Math.max(1, stack.getMaxDamage()))));
+        int wear = Math.max(1, (int) Math.ceil(base * scale));
+        stack.hurtAndBreak(wear, player, EquipmentSlot.MAINHAND);
+    }
+
     private static boolean inAngle(ServerPlayer player, DamageSource source) {
-        if (GuardConfig.FACING_ANGLE.get() >= 360) return true;
-        if (!(source.getEntity() instanceof LivingEntity attacker)) return false;
+        if (!(source.getEntity() instanceof LivingEntity attacker) || source.getDirectEntity() != attacker) return false;
         if (player.distanceTo(attacker) > 4.0D) return false;
+        if (GuardConfig.FACING_ANGLE.get() >= 360) return true;
         Vec3 offset = attacker.position().subtract(player.position());
         if (offset.lengthSqr() < 1.0E-8D) return true;
         double dot = player.getLookAngle().normalize().dot(offset.normalize());

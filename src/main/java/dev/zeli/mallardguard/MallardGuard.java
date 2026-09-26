@@ -12,10 +12,12 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
+import net.minecraft.world.entity.LivingEntity;
 
 @Mod(MallardGuard.ID)
 public final class MallardGuard {
     public static final String ID = "mallardguard";
+    private static final ThreadLocal<Boolean> RETURNING_DAMAGE = ThreadLocal.withInitial(() -> false);
 
     public MallardGuard(IEventBus modBus, ModContainer container) {
         container.registerConfig(ModConfig.Type.SERVER, GuardConfig.SERVER_SPEC);
@@ -38,12 +40,28 @@ public final class MallardGuard {
     }
 
     private void incomingDamage(LivingIncomingDamageEvent event) {
+        if (RETURNING_DAMAGE.get()) return;
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
         GuardState.Result result = GuardState.handleHit(player, event.getSource());
         if (result == GuardState.Result.PERFECT || result == GuardState.Result.PARRY) {
+            GuardState.wear(player, result);
             event.setCanceled(true);
+            if (event.getSource().getEntity() instanceof LivingEntity attacker && attacker != player) {
+                float multiplier = result == GuardState.Result.PERFECT ? GuardConfig.PERFECT_RETALIATION.get().floatValue() : GuardConfig.PARRY_RETALIATION.get().floatValue();
+                if (multiplier > 0 && event.getAmount() > 0) {
+                    RETURNING_DAMAGE.set(true);
+                    try {
+                        attacker.hurt(player.damageSources().playerAttack(player), event.getAmount() * multiplier);
+                    } finally {
+                        RETURNING_DAMAGE.remove();
+                    }
+                }
+            }
             return;
         }
-        if (result == GuardState.Result.BLOCK) event.setAmount(event.getAmount() * (1.0F - GuardConfig.BLOCK_REDUCTION.get().floatValue()));
+        if (result == GuardState.Result.BLOCK) {
+            GuardState.wear(player, result);
+            event.setAmount(event.getAmount() * (1.0F - GuardConfig.BLOCK_REDUCTION.get().floatValue()));
+        }
     }
 }
