@@ -4,6 +4,6 @@
   "compatibilityLevel": "JAVA_21",
   "package": "dev.zeli.mallardguard.mixin",
   "mixins": [],
-  "client": ["client.ItemInHandRendererAccessor", "client.HumanoidModelMixin"],
+  "client": ["client.ItemInHandRendererAccessor"],
   "injectors": {"defaultRequire": 1}
 }

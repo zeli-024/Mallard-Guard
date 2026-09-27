@@ -11,6 +11,7 @@ import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.entity.living.LivingShieldBlockEvent;
 import net.neoforged.neoforge.event.entity.ProjectileImpactEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.minecraft.world.entity.LivingEntity;
@@ -23,14 +24,22 @@ public final class MallardGuard {
     private static final ThreadLocal<Boolean> RETURNING_DAMAGE = ThreadLocal.withInitial(() -> false);
 
     public MallardGuard(IEventBus modBus, ModContainer container) {
+        if (net.neoforged.fml.loading.FMLEnvironment.dist == net.neoforged.api.distmarker.Dist.CLIENT) {
+            dev.zeli.mallardguard.client.GuardClient.registerConfigScreen(container);
+            modBus.addListener(dev.zeli.mallardguard.client.GuardClient::registerKeyMappings);
+        }
+        GuardConfig.setCurrentVersion(container.getModInfo().getVersion().toString());
+        modBus.addListener(GuardConfig::onLoad);
         container.registerConfig(ModConfig.Type.SERVER, GuardConfig.SERVER_SPEC);
         container.registerConfig(ModConfig.Type.CLIENT, GuardConfig.CLIENT_SPEC);
         GuardSounds.EVENTS.register(modBus);
         GuardParticles.TYPES.register(modBus);
         modBus.addListener(GuardPackets::register);
         NeoForge.EVENT_BUS.addListener(GuardState::tick);
+        NeoForge.EVENT_BUS.addListener(GuardState::postponeShieldUse);
         NeoForge.EVENT_BUS.addListener(this::commands);
         NeoForge.EVENT_BUS.addListener(this::incomingDamage);
+        NeoForge.EVENT_BUS.addListener(this::shieldBlock);
         NeoForge.EVENT_BUS.addListener(GuardCombatEffects::projectileImpact);
     }
 
@@ -84,5 +93,13 @@ public final class MallardGuard {
             GuardState.wear(player, result);
             event.setAmount(event.getAmount() * (1.0F - GuardConfig.BLOCK_REDUCTION.get().floatValue()));
         }
+    }
+
+    private void shieldBlock(LivingShieldBlockEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player) || !GuardState.isShieldBlocking(player)
+            || !event.getBlocked() || event.getBlockedDamage() <= 0) return;
+        GuardEffects.onHit(player, event.getDamageSource(), GuardState.Result.BLOCK);
+        PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(3));
+        // The item's own shield logic handles damage reduction and durability.
     }
 }

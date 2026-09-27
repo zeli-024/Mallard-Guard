@@ -2,30 +2,59 @@ package dev.zeli.mallardguard.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.zeli.mallardguard.GuardConfig;
+import dev.zeli.mallardguard.GuardItemRules;
 import dev.zeli.mallardguard.GuardPackets;
 import dev.zeli.mallardguard.GuardParticles;
+import dev.zeli.mallardguard.GuardState;
 import dev.zeli.mallardguard.MallardGuard;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.AttackIndicatorStatus;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.client.event.ComputeFovModifierEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
+import net.neoforged.fml.ModContainer;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.bus.api.EventPriority;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import org.lwjgl.glfw.GLFW;
 
 @EventBusSubscriber(modid = MallardGuard.ID, value = Dist.CLIENT)
 public final class GuardClient {
-    private static final ResourceLocation BACKGROUND = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/backgroundlayer.png");
-    private static final ResourceLocation ANIMATED = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/animatedlayer.png");
-    private static final ResourceLocation FLASH_MASK = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/flashmask.png");
+    private static final KeyMapping GUARD_KEY = new KeyMapping("key.mallardguard.guard",
+        InputConstants.Type.MOUSE, GLFW.GLFW_MOUSE_BUTTON_RIGHT, "key.categories.mallardguard");
+    private static final KeyMapping CONFIG_KEY = new KeyMapping("key.mallardguard.open_config",
+        InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_CONTROL, "key.categories.mallardguard");
+    private static final ResourceLocation SHIELD = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield.png");
+    private static final ResourceLocation BLOCK_VIGNETTE = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/block_vignette.png");
+    // Pixel coverage of the supplied 16x16 shield. Used for tinted effects without recoloring its artwork.
+    private static final int[] SHIELD_PIXELS = {
+        0x0000, 0x03C0, 0x0FF0, 0x1FF8, 0x3FFC, 0x3FFC, 0x3FFC, 0x1FF8,
+        0x1FF8, 0x1FF8, 0x0FF0, 0x0FF0, 0x07E0, 0x0180, 0x0000, 0x0000
+    };
     private static boolean wasDown;
     private static int phase;
+    private static boolean offhand;
     private static int elapsed;
     private static int recharge;
     private static int window = 7;
@@ -33,23 +62,78 @@ public final class GuardClient {
     private static int hitResult;
     private static long resultStartMs;
     private static final long FLASH_DURATION_MS = 420;
-    private static final long ECHO_DURATION_MS = 550;
-    private static final long RESULT_HOLD_MS = 620;
+    private static final long REGULAR_REACTION_MS = 190;
+    private static final long PERFECT_REACTION_MS = 460;
+    private static final long BLOCK_REACTION_MS = 240;
+    private static final long CHARGE_GLOW_MS = 300;
+    private static long chargeGlowStartMs;
+    private static long stanceStartMs;
+    private static long blockStartMs;
+    private static long strainedBlockStartMs;
+    private static boolean readyGlowQueued;
+    private static boolean wasGuardKeyDown;
+    private static boolean waitForGuardRelease;
     private static AttackIndicatorStatus savedAttackIndicator;
 
     private GuardClient() {}
+
+    public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
+        event.register(GUARD_KEY);
+        event.register(CONFIG_KEY);
+    }
+
+    public static void registerConfigScreen(ModContainer container) {
+        container.registerExtensionPoint(IConfigScreenFactory.class, (mod, parent) -> {
+            if (Minecraft.getInstance().getConnection() == null)
+                return new GuardConfigScreen(GuardConfig.defaultSnapshot(false), parent);
+            return new GuardConfigLoadingScreen(parent);
+        });
+    }
 
     public static boolean isStanceActive() {
         return phase != 0;
     }
 
-    public static boolean isCurrentMainHand(ItemStack stack) {
+    public static InteractionHand guardHand(Player player) {
         Minecraft minecraft = Minecraft.getInstance();
-        return minecraft.player != null && !stack.isEmpty() && ItemStack.isSameItemSameComponents(stack, minecraft.player.getMainHandItem());
+        if (player == minecraft.player) return phase == 0 || phase == 4 ? null : (offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND);
+        return null;
+    }
+
+    public static boolean isCurrentGuardHand(ItemStack stack) {
+        Minecraft minecraft = Minecraft.getInstance();
+        return minecraft.player != null && phase != 0 && phase != 4 && !stack.isEmpty() && ItemStack.isSameItemSameComponents(stack,
+            minecraft.player.getItemInHand(offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND));
     }
 
     public static void status(GuardPackets.Status data) {
+        if (phase != 3 && phase != 4 && (data.phase() == 3 || data.phase() == 4)) blockStartMs = System.currentTimeMillis();
+        if ((phase == 3 || phase == 4) && data.phase() != 3 && data.phase() != 4) {
+            blockStartMs = 0;
+            strainedBlockStartMs = 0;
+        }
+        if (phase == 0 && data.phase() != 0) {
+            stanceStartMs = System.currentTimeMillis();
+            hitResult = 0;
+            resultStartMs = 0;
+            readyGlowQueued = false;
+            chargeGlowStartMs = 0;
+            strainedBlockStartMs = 0;
+        }
+        if (recharge > 0 && data.recharge() == 0 && data.phase() == 0 && phase != 1) {
+            // A perfect parry resets recharge instantly. Its reaction is the only visual.
+            readyGlowQueued = true;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null) {
+            InteractionHand hand = data.offhand() ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+            if ((data.phase() == 1 || data.phase() == 2) && GuardItemRules.shieldLike(mc.player.getItemInHand(hand))
+                && mc.player.isUsingItem() && mc.player.getUsedItemHand() == hand) mc.player.stopUsingItem();
+            if (data.phase() == 4 && phase != 4 && GUARD_KEY.isDown()
+                && GuardItemRules.shieldLike(mc.player.getItemInHand(hand))) mc.player.startUsingItem(hand);
+        }
         phase = data.phase();
+        offhand = data.offhand();
         elapsed = data.elapsed();
         recharge = data.recharge();
         window = data.window();
@@ -57,13 +141,20 @@ public final class GuardClient {
     }
 
     public static void settings(GuardPackets.Settings data) {
-        Minecraft.getInstance().setScreen(new GuardConfigScreen(data));
+        Minecraft minecraft = Minecraft.getInstance();
+        // Ignore a late reply if the player already backed out of the Mods menu.
+        if (minecraft.screen != null && !(minecraft.screen instanceof GuardConfigLoadingScreen)) return;
+        Screen parent = minecraft.screen instanceof GuardConfigLoadingScreen loading ? loading.parent() : null;
+        minecraft.setScreen(new GuardConfigScreen(data, parent));
     }
 
     public static void hitResult(GuardPackets.HitResult data) {
         if (data.result() < 1 || data.result() > 3) return;
         hitResult = data.result();
         resultStartMs = System.currentTimeMillis();
+        chargeGlowStartMs = 0;
+        if (hitResult == 3 && strainedBlockStartMs == 0) strainedBlockStartMs = resultStartMs;
+        if (hitResult == 2) readyGlowQueued = false;
     }
 
     public static void sparks(GuardPackets.Sparks data) {
@@ -74,27 +165,44 @@ public final class GuardClient {
             data.x(), data.y(), data.z(), 0, 0, 0);
         if (data.perfect()) {
             // Particle Interactions' separate star sprites accompany only perfect parries.
-            for (int i = 0; i < 12; i++) {
+            double starOffset = mc.level.random.nextDouble() * Math.PI * 2.0D;
+            for (int i = 0; i < 10; i++) {
+                Vec3 direction = burstDirection(i, 10, starOffset, mc.level.random);
                 double x = data.x() + (mc.level.random.nextDouble() - 0.5D) * 0.36D;
                 double y = data.y() + (mc.level.random.nextDouble() - 0.5D) * 0.30D;
                 double z = data.z() + (mc.level.random.nextDouble() - 0.5D) * 0.36D;
-                mc.level.addParticle(GuardParticles.SPARK_FLASH.get(), x, y, z, 0, 0, 0);
+                // Star sprites follow the streaks' outward burst instead of lingering near the hit.
+                double speed = 0.34D + mc.level.random.nextDouble() * 0.19D;
+                mc.level.addParticle(GuardParticles.SPARK_FLASH.get(), x, y, z,
+                    direction.x * speed, direction.y * speed, direction.z * speed);
             }
         }
         double angleOffset = mc.level.random.nextDouble() * Math.PI * 2.0D;
         for (int i = 0; i < data.count(); i++) {
-            double angle = angleOffset + Math.PI * 2.0D * i / data.count();
-            double dx = Math.cos(angle) * 0.08D + (mc.level.random.nextDouble() - 0.5D) * 0.32D;
-            double dz = Math.sin(angle) * 0.08D + (mc.level.random.nextDouble() - 0.5D) * 0.32D;
+            Vec3 direction = burstDirection(i, data.count(), angleOffset, mc.level.random);
             // One anvil-style spray per hit. The old three delayed emissions
             // made a single parry look as though the effect had played twice.
-            double x = data.x() + dx + (mc.level.random.nextDouble() - 0.5D) * 0.25D;
-            double z = data.z() + dz + (mc.level.random.nextDouble() - 0.5D) * 0.25D;
-            double vx = Math.clamp(dx, -1.0D, 1.0D) * 2.5D;
-            double vz = Math.clamp(dz, -1.0D, 1.0D) * 2.5D;
-            double vy = 0.4D * (0.24D + Math.max(Math.abs(dx), Math.abs(dz)));
-            mc.level.addParticle(GuardParticles.FLYING_SPARK.get(), x, data.y(), z, vx, vy, vz);
+            double x = data.x() + direction.x * 0.12D + (mc.level.random.nextDouble() - 0.5D) * 0.12D;
+            double y = data.y() + direction.y * 0.12D + (mc.level.random.nextDouble() - 0.5D) * 0.12D;
+            double z = data.z() + direction.z * 0.12D + (mc.level.random.nextDouble() - 0.5D) * 0.12D;
+            double speed = (data.perfect() ? 0.77D : 0.61D) + mc.level.random.nextDouble() * (data.perfect() ? 0.47D : 0.44D);
+            double vx = direction.x * speed + (mc.level.random.nextDouble() - 0.5D) * 0.16D;
+            double vy = direction.y * speed + (mc.level.random.nextDouble() - 0.5D) * 0.16D;
+            double vz = direction.z * speed + (mc.level.random.nextDouble() - 0.5D) * 0.16D;
+            mc.level.addParticle(GuardParticles.FLYING_SPARK.get(), x, y, z, vx, vy, vz);
         }
+    }
+
+    private static Vec3 burstDirection(int index, int count, double offset, RandomSource random) {
+        // Spread across a rounded burst while avoiding steep floor-bound shots.
+        // Redistribute directions into the upper sphere rather than clamping
+        // a full sphere, which would pile particles into a flat bottom band.
+        double vertical = Math.clamp(0.85D - 1.10D * (index + 0.5D) / count
+            + (random.nextDouble() - 0.5D) * 0.08D, -0.25D, 0.85D);
+        double angle = offset + index * (Math.PI * (3.0D - Math.sqrt(5.0D)))
+            + (random.nextDouble() - 0.5D) * 0.3D;
+        double horizontal = Math.sqrt(1.0D - vertical * vertical);
+        return new Vec3(Math.cos(angle) * horizontal, vertical, Math.sin(angle) * horizontal);
     }
 
     @SubscribeEvent
@@ -109,22 +217,92 @@ public final class GuardClient {
         event.setPitch(event.getPitch() + (float) Math.sin(age * 0.135D) * 1.4F * amplitude);
     }
 
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public static void keepGuardSpeedOutOfFov(ComputeFovModifierEvent event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || event.getPlayer() != mc.player) return;
+        AttributeInstance speed = mc.player.getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed == null) return;
+        AttributeModifier guard = speed.getModifier(GuardState.GUARD_SLOWDOWN);
+        if (guard == null || guard.amount() >= 0) return;
+        double walking = mc.player.getAbilities().getWalkingSpeed();
+        double speedFraction = 1.0D + guard.amount();
+        if (walking <= 0.0D) return;
+        // Undo only our movement speed modifier's contribution to the vanilla
+        // speed FOV factor. Bow, sprint, potions and other FOV modifiers remain.
+        double currentFactor = (speed.getValue() / walking + 1.0D) * 0.5D;
+        double unguardedSpeed = speedFraction > 0.0D ? speed.getValue() / speedFraction : speed.getBaseValue();
+        double unguardedFactor = (unguardedSpeed / walking + 1.0D) * 0.5D;
+        if (currentFactor > 0.0D && Double.isFinite(unguardedFactor))
+            event.setNewFovModifier((float) (event.getNewFovModifier() * unguardedFactor / currentFactor));
+    }
+
     @SubscribeEvent
     public static void tick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.getConnection() == null) {
+            if (mc.player != null) GuardState.updateMovement(mc.player, false);
             restoreAttackIndicator();
             wasDown = false;
+            wasGuardKeyDown = false;
+            waitForGuardRelease = false;
             phase = recharge = 0;
             hitResult = 0;
             resultStartMs = 0;
+            chargeGlowStartMs = 0;
+            stanceStartMs = 0;
+            blockStartMs = 0;
+            strainedBlockStartMs = 0;
+            readyGlowQueued = false;
             return;
         }
-        boolean down = mc.screen == null && mc.options.keyUse.isDown();
+        while (CONFIG_KEY.consumeClick()) {
+            if (mc.screen == null) {
+                mc.setScreen(mc.getConnection() == null
+                    ? new GuardConfigScreen(GuardConfig.defaultSnapshot(false), null)
+                    : new GuardConfigLoadingScreen(null));
+                break;
+            }
+        }
+        boolean guardKeyDown = mc.screen == null && GUARD_KEY.isDown();
+        boolean hasConsumable = GuardItemRules.consumableInEitherHand(mc.player);
+        if (!guardKeyDown) waitForGuardRelease = false;
+        if (guardKeyDown && hasConsumable) waitForGuardRelease = true;
+        if (guardKeyDown && !wasGuardKeyDown && hasConsumable && !mc.options.keyUse.isDown()
+            && !mc.player.isUsingItem() && mc.gameMode != null) {
+            mc.gameMode.useItem(mc.player, GuardItemRules.consumable(mc.player.getMainHandItem())
+                ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
+        }
+        wasGuardKeyDown = guardKeyDown;
+        boolean down = guardKeyDown && !hasConsumable && !waitForGuardRelease;
+        if (!down && phase == 4
+            && mc.player.isUsingItem() && GuardItemRules.shieldLike(mc.player.getUseItem())) mc.player.stopUsingItem();
+        if ((phase == 1 || phase == 2) && mc.player.isUsingItem()
+            && GuardItemRules.shieldLike(mc.player.getUseItem())) mc.player.stopUsingItem();
+        GuardState.updateMovement(mc.player, down && (phase != 0 || !wasDown && recharge == 0 && GuardState.eligible(mc.player)));
         if (down != wasDown) {
             wasDown = down;
-            PacketDistributor.sendToServer(new GuardPackets.Input(down));
+            boolean chooseOffhand = down &&
+                (GuardConfig.PREFER_OFFHAND.get() ? GuardState.eligible(mc.player, InteractionHand.OFF_HAND)
+                    : GuardState.eligible(mc.player, InteractionHand.OFF_HAND)
+                        && (!GuardState.eligible(mc.player, InteractionHand.MAIN_HAND)
+                            || GuardItemRules.shieldLike(mc.player.getOffhandItem())
+                                && mc.player.getMainHandItem().getUseAnimation() == net.minecraft.world.item.UseAnim.NONE));
+            PacketDistributor.sendToServer(new GuardPackets.Input(down, chooseOffhand));
         }
+    }
+
+    @SubscribeEvent
+    public static void prioritizeConsumable(InputEvent.InteractionKeyMappingTriggered event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!event.isUseItem() || event.getHand() != InteractionHand.MAIN_HAND || mc.player == null
+            || mc.gameMode == null || mc.player.isUsingItem()
+            || GuardItemRules.consumable(mc.player.getMainHandItem())
+            || !GuardItemRules.consumable(mc.player.getOffhandItem())) return;
+        // Bypass the main-hand item so eating/drinking in the offhand works even
+        // when that item (such as a shield) normally consumes the right click.
+        event.setCanceled(true);
+        mc.gameMode.useItem(mc.player, InteractionHand.OFF_HAND);
     }
 
     // The attack indicator shares vanilla's crosshair/hotbar layers. Hide it only
@@ -133,7 +311,8 @@ public final class GuardClient {
     public static void beforeLayer(RenderGuiLayerEvent.Pre event) {
         if (savedAttackIndicator != null) restoreAttackIndicator();
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get() || (phase == 0 && recharge == 0 && !resultVisible())) return;
+        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get() ||
+            (phase == 0 && recharge == 0 && !resultVisible() && !readyGlowQueued && !readyGlowVisible())) return;
         if (event.getName().equals(VanillaGuiLayers.CROSSHAIR) || event.getName().equals(VanillaGuiLayers.HOTBAR)) {
             savedAttackIndicator = mc.options.attackIndicator().get();
             mc.options.attackIndicator().set(AttackIndicatorStatus.OFF);
@@ -154,7 +333,16 @@ public final class GuardClient {
 
     private static boolean resultVisible() {
         long age = System.currentTimeMillis() - resultStartMs;
-        return GuardConfig.SHIELD_EFFECTS.get() && hitResult != 0 && age >= 0 && age < RESULT_HOLD_MS;
+        return GuardConfig.SHIELD_EFFECTS.get() && hitResult != 0 && resultStartMs != 0 && age >= 0 && age < reactionDuration();
+    }
+
+    private static long reactionDuration() {
+        return hitResult == 2 ? PERFECT_REACTION_MS : hitResult == 3 ? BLOCK_REACTION_MS : REGULAR_REACTION_MS;
+    }
+
+    private static boolean readyGlowVisible() {
+        long age = System.currentTimeMillis() - chargeGlowStartMs;
+        return GuardConfig.SHIELD_EFFECTS.get() && chargeGlowStartMs != 0 && age >= 0 && age < CHARGE_GLOW_MS;
     }
 
     @SubscribeEvent
@@ -167,95 +355,209 @@ public final class GuardClient {
         int shieldSize = 18;
         float shieldCenterX = crosshairX + 7.5F;
         float shieldCenterY = crosshairY + 15 + 2 + shieldSize / 2.0F;
-        long resultAge = System.currentTimeMillis() - resultStartMs;
-        if (GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0 && (hitResult == 1 || hitResult == 2) && resultAge >= 0 && resultAge < 260) {
+        long now = System.currentTimeMillis();
+        long resultAge = now - resultStartMs;
+        int screenFlashMs = hitResult == 2 ? 260 : 190;
+        if (GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0 &&
+            (hitResult == 1 || hitResult == 2) && resultStartMs != 0 && resultAge >= 0 && resultAge < screenFlashMs) {
             renderScreenFlash(event.getGuiGraphics(), resultAge);
-            // Commit the white screen flash before submitting the echo and shield textures.
             event.getGuiGraphics().flush();
         }
-        if (GuardConfig.SHIELD_EFFECTS.get() && hitResult == 3 && resultAge >= 0 && resultAge < FLASH_DURATION_MS) {
+        if (GuardConfig.SHIELD_EFFECTS.get() && hitResult == 3 && resultStartMs != 0 && resultAge >= 0 && resultAge < FLASH_DURATION_MS) {
             renderBlockVignette(event.getGuiGraphics(), resultAge);
         }
         if (!GuardConfig.HUD.get()) return;
         boolean showingResult = resultVisible();
-        if (phase == 0 && recharge == 0 && !showingResult) return;
-        float progress = showingResult ? Math.min(1.0F, resultAge / (float) FLASH_DURATION_MS) : 1.0F;
-        float expansion = hitResult == 2 ? 0.82F : hitResult == 1 ? 0.30F : 0.18F;
-        float pulse = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(Math.PI * progress) * expansion : 0.0F;
-        float shakeStrength = hitResult == 2 ? 3.5F : 1.1F;
-        float shake = showingResult && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.13D) * shakeStrength * (1.0F - progress) : 0.0F;
-        float verticalShake = showingResult && hitResult == 2 && resultAge < FLASH_DURATION_MS ? (float) Math.sin(resultAge * 0.18D) * 1.3F * (1.0F - progress) : 0.0F;
-        boolean draining = phase == 1 || phase == 2;
-        event.getGuiGraphics().pose().pushPose();
-        event.getGuiGraphics().pose().translate(shieldCenterX, shieldCenterY, 0);
+        // A reaction owns the shield until it finishes. The ready glow starts afterward.
+        if (readyGlowQueued && !showingResult && phase == 0 && recharge == 0) {
+            readyGlowQueued = false;
+            chargeGlowStartMs = now;
+        }
+        long chargeAge = now - chargeGlowStartMs;
+        boolean chargeGlow = readyGlowVisible() && !showingResult && phase == 0 && recharge == 0;
+        if (phase == 0 && recharge == 0 && !showingResult && !chargeGlow) return;
+        boolean strainedBlock = GuardConfig.SHIELD_EFFECTS.get() && (phase == 3 || phase == 4) && strainedBlockStartMs != 0 && !showingResult;
+        float strainedFade = strainedBlock ? Math.clamp((now - strainedBlockStartMs - BLOCK_REACTION_MS) / 220.0F, 0.0F, 1.0F) : 0.0F;
+        GuiGraphics graphics = event.getGuiGraphics();
+        float progress = showingResult ? Math.clamp(resultAge / (float) reactionDuration(), 0.0F, 1.0F) : 1.0F;
+        float chargeProgress = chargeGlow ? chargeAge / (float) CHARGE_GLOW_MS : 1.0F;
+        float bob = chargeGlow ? -(float) Math.sin(Math.PI * chargeProgress) * 2.0F : 0.0F;
+        float chargeFade = chargeGlow ? Math.clamp((1.0F - chargeProgress) / 0.48F, 0.0F, 1.0F) : 1.0F;
+        float entrance = phase != 0 && stanceStartMs != 0 ? Math.clamp((now - stanceStartMs) / 90.0F, 0.0F, 1.0F) : 1.0F;
+        graphics.pose().pushPose();
+        graphics.pose().translate(shieldCenterX, shieldCenterY + bob, 0);
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        if (showingResult && hitResult == 2 && resultAge < ECHO_DURATION_MS) {
-            float echoProgress = resultAge / (float) ECHO_DURATION_MS;
-            float echoScale = shieldSize / 32.0F * (1.0F + 3.15F * echoProgress);
-            event.getGuiGraphics().pose().pushPose();
-            event.getGuiGraphics().pose().scale(echoScale, echoScale, 1.0F);
-            event.getGuiGraphics().pose().translate(-16, -16, 0);
-            RenderSystem.setShaderColor(1.0F, 0.78F, 0.16F, 0.52F * (1.0F - echoProgress));
-            event.getGuiGraphics().blit(FLASH_MASK, 0, 0, 0, 0, 32, 32, 32, 32);
-            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-            event.getGuiGraphics().pose().popPose();
-        }
-        event.getGuiGraphics().pose().translate(shake, verticalShake, 0);
-        float iconScale = shieldSize / 32.0F * (1.0F + pulse);
-        event.getGuiGraphics().pose().scale(iconScale, iconScale, 1.0F);
-        event.getGuiGraphics().pose().translate(-16, -16, 0);
-        RenderSystem.setShaderColor(0.24f, 0.24f, 0.24f, 1f);
-        event.getGuiGraphics().blit(BACKGROUND, 0, 0, 0, 0, 32, 32, 32, 32);
-        RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
-        if (showingResult && phase == 0 && recharge == 0) {
-            // Perfect parries otherwise clear the shield immediately. Hold its normal
-            // color briefly after the flash, then let the icon disappear as usual.
-            event.getGuiGraphics().blit(ANIMATED, 0, 0, 0, 0, 32, 32, 32, 32);
-        } else if (draining) {
-            int removed = Math.min(32, Math.max(0, Math.round(32f * elapsed / Math.max(1, window))));
-            if (removed < 32) {
-                event.getGuiGraphics().blit(ANIMATED, removed, 0, removed, 0, 32 - removed, 32, 32, 32);
+        if (showingResult && hitResult == 2) {
+            // One large, fading copy of the same artwork, behind the perfect parry.
+            renderEcho(graphics, shieldSize / 16.0F * (1.12F + 2.28F * progress), 0.43F * (1.0F - progress), 0, 0);
+        } else if (showingResult && hitResult == 3) {
+            // Three short, staggered ripples barely clear the shield's edge.
+            for (int i = 0; i < 3; i++) {
+                float echoAge = (resultAge - i * 48.0F) / (BLOCK_REACTION_MS - i * 48.0F);
+                if (echoAge < 0 || echoAge >= 1) continue;
+                float offset = (i % 2 == 0 ? -1.0F : 1.0F) * (1.0F - echoAge);
+                renderBlockEcho(graphics, shieldSize / 16.0F * (1.03F + 0.13F * echoAge),
+                    0.40F * (1.0F - echoAge), offset, -offset * 0.5F);
             }
-        } else if (phase != 3) {
-            int filled = Math.min(32, Math.max(0, Math.round(32f * (1f - (float) recharge / Math.max(1, rechargeMax)))));
-            if (filled > 0) {
-                int start = 32 - filled;
-                event.getGuiGraphics().blit(ANIMATED, start, 0, start, 0, filled, 32, 32, 32);
+        } else if (strainedBlock) {
+            // After the first blocked hit, small dark ripples persist until guard ends.
+            for (int i = 0; i < 2; i++) {
+                float echoProgress = ((now - strainedBlockStartMs + i * 190) % 380) / 380.0F;
+                renderBlockEcho(graphics, shieldSize / 16.0F * (1.02F + 0.13F * echoProgress),
+                    0.24F * (1.0F - echoProgress) * strainedFade, 0, 0);
             }
         }
-        if (showingResult && resultAge < FLASH_DURATION_MS) {
-            int rgb = switch (hitResult) {
-                case 2 -> 0xFFD43B; // perfect parry: gold
-                case 3 -> 0xFF3D4E; // held block: red
-                default -> 0xFFFFFF; // regular and follow-up parry: white
-            };
-            float fade = 1.0F - progress * progress;
-            RenderSystem.setShaderColor(((rgb >> 16) & 255) / 255.0F, ((rgb >> 8) & 255) / 255.0F, (rgb & 255) / 255.0F, 0.5F * fade);
-            event.getGuiGraphics().blit(FLASH_MASK, 0, 0, 0, 0, 32, 32, 32, 32);
-            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+        float pulse = showingResult ? (float) Math.sin(Math.PI * progress) *
+            (hitResult == 2 ? 1.00F : hitResult == 1 ? 0.37F : 0.0F) : 0.0F;
+        float shakeStrength = hitResult == 2 ? 3.8F : hitResult == 3 ? 1.6F : 1.4F;
+        float shake = showingResult ? (float) Math.sin(resultAge * (hitResult == 3 ? 0.20D : 0.15D)) * shakeStrength * (1.0F - progress) : 0.0F;
+        float verticalShake = showingResult ? (float) Math.cos(resultAge * 0.17D) * shakeStrength * 0.35F * (1.0F - progress) : 0.0F;
+        float trembleX = strainedBlock ? (float) Math.sin(now * 0.075D) * 0.38F * strainedFade : 0.0F;
+        float trembleY = strainedBlock ? (float) Math.cos(now * 0.11D) * 0.23F * strainedFade : 0.0F;
+        graphics.pose().translate(shake + trembleX, verticalShake + trembleY, 0);
+        graphics.pose().scale(shieldSize / 16.0F * (1.0F + pulse), shieldSize / 16.0F * (1.0F + pulse), 1.0F);
+        graphics.pose().translate(-8, -8, 0);
+        if (showingResult) {
+            if (hitResult == 3) {
+                // The dark shield keeps its size. Only its red impact flash expands.
+                drawShieldTinted(graphics, 0, 16, (0.38F + 0.38F * (1.0F - progress)) * entrance,
+                    0.42F, 0.37F, 0.45F);
+                graphics.pose().pushPose();
+                graphics.pose().translate(8, 8, 0);
+                float redExpansion = 1.0F + 0.23F * (float) Math.sin(Math.PI * progress);
+                graphics.pose().scale(redExpansion, redExpansion, 1.0F);
+                graphics.pose().translate(-8, -8, 0);
+                drawShieldMask(graphics, 0xEF3448, 0.64F * (1.0F - progress * progress));
+                graphics.pose().popPose();
+            } else {
+                drawShield(graphics, 0.88F * entrance);
+            }
+            if (hitResult == 2) {
+                // Briefly outgrow the expanding shield so its white edge reads clearly.
+                graphics.pose().pushPose();
+                graphics.pose().translate(8, 8, 0);
+                float whiteExpansion = 1.0F + 0.11F * (float) Math.sin(Math.PI * progress);
+                graphics.pose().scale(whiteExpansion, whiteExpansion, 1.0F);
+                graphics.pose().translate(-8, -8, 0);
+                drawShieldMask(graphics, 0xFFFFFF, 0.23F * (1.0F - progress));
+                graphics.pose().popPose();
+            } else if (hitResult == 1) {
+                drawShieldMask(graphics, 0xFFFFFF, 0.16F * (1.0F - progress));
+            }
+        } else {
+            if (phase == 3 || phase == 4) {
+                // The held-block icon is visible before impact, then settles into a darker tremble.
+                float holdFade = blockStartMs == 0 ? 1.0F : Math.clamp((now - blockStartMs) / 130.0F, 0.0F, 1.0F);
+                float baseOpacity = (0.33F + 0.27F * holdFade) * entrance;
+                drawShieldTinted(graphics, 0, 16, baseOpacity * (1.0F - 0.10F * strainedFade),
+                    1.0F - 0.45F * strainedFade, 1.0F - 0.50F * strainedFade, 1.0F - 0.41F * strainedFade);
+            } else {
+                drawShield(graphics, 0.33F * entrance * chargeFade);
+            }
+            if (chargeGlow) {
+                drawShield(graphics, 0.82F * chargeFade);
+            } else if (phase == 1 || phase == 2) {
+                // Remove the active layer from the top while the parry window runs out.
+                int drained = Math.clamp(Math.round(16.0F * elapsed / Math.max(1, window)), 0, 16);
+                if (drained < 16) drawShieldRegion(graphics, drained, 16 - drained, 0.82F * entrance);
+            } else if (phase != 3 && phase != 4) {
+                // Refill the active layer from the bottom after releasing the stance.
+                int filled = Math.clamp(Math.round(16.0F * (1.0F - recharge / (float) Math.max(1, rechargeMax))), 0, 16);
+                if (filled > 0) drawShieldRegion(graphics, 16 - filled, filled, 0.82F);
+            }
+        }
+        if (chargeGlow) {
+            float glow = Math.min(1.0F, chargeProgress / 0.20F) * (1.0F - chargeProgress);
+            drawShieldOutline(graphics, glow);
         }
         RenderSystem.disableBlend();
-        event.getGuiGraphics().pose().popPose();
+        graphics.pose().popPose();
+    }
+
+    private static void drawShield(GuiGraphics graphics, float opacity) {
+        drawShieldRegion(graphics, 0, 16, opacity);
+    }
+
+    private static void drawShieldRegion(GuiGraphics graphics, int top, int height, float opacity) {
+        drawShieldTinted(graphics, top, height, opacity, 1.0F, 1.0F, 1.0F);
+    }
+
+    private static void drawShieldTinted(GuiGraphics graphics, int top, int height, float opacity,
+                                         float red, float green, float blue) {
+        if (height <= 0 || opacity <= 0.0F) return;
+        RenderSystem.setShaderColor(red, green, blue, opacity);
+        graphics.blit(SHIELD, 0, top, 0, top, 16, height, 16, 16);
+        graphics.flush();
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+    }
+
+    private static void renderEcho(GuiGraphics graphics, float scale, float opacity, float x, float y) {
+        graphics.pose().pushPose();
+        graphics.pose().translate(x, y, 0);
+        graphics.pose().scale(scale, scale, 1.0F);
+        graphics.pose().translate(-8, -8, 0);
+        drawShield(graphics, opacity);
+        drawShieldMask(graphics, 0xFFFFFF, opacity * 0.35F);
+        graphics.pose().popPose();
+    }
+
+    private static void renderBlockEcho(GuiGraphics graphics, float scale, float opacity, float x, float y) {
+        graphics.pose().pushPose();
+        graphics.pose().translate(x, y, 0);
+        graphics.pose().scale(scale, scale, 1.0F);
+        graphics.pose().translate(-8, -8, 0);
+        drawShieldTinted(graphics, 0, 16, opacity, 0.58F, 0.51F, 0.62F);
+        graphics.pose().popPose();
+    }
+
+    private static boolean shieldPixel(int x, int y) {
+        return x >= 0 && x < 16 && y >= 0 && y < 16 && (SHIELD_PIXELS[y] & (1 << x)) != 0;
+    }
+
+    private static void drawShieldMask(GuiGraphics graphics, int color, float opacity) {
+        int alpha = Math.round(Math.clamp(opacity, 0.0F, 1.0F) * 255.0F);
+        if (alpha == 0) return;
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
+                if (shieldPixel(x, y)) graphics.fill(x, y, x + 1, y + 1, (alpha << 24) | color);
+            }
+        }
+    }
+
+    private static void drawShieldOutline(GuiGraphics graphics, float opacity) {
+        int alpha = Math.round(Math.clamp(opacity, 0.0F, 1.0F) * 215.0F);
+        if (alpha == 0) return;
+        for (int y = -1; y <= 16; y++) {
+            for (int x = -1; x <= 16; x++) {
+                if (shieldPixel(x, y)) continue;
+                boolean neighbor = false;
+                for (int dy = -1; dy <= 1 && !neighbor; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) neighbor |= shieldPixel(x + dx, y + dy);
+                }
+                if (neighbor) graphics.fill(x, y, x + 1, y + 1, (alpha << 24) | 0xFFFFFF);
+            }
+        }
     }
 
     private static void renderBlockVignette(net.minecraft.client.gui.GuiGraphics graphics, long age) {
-        float fade = 1.0F - age / (float) FLASH_DURATION_MS;
+        // The alpha in this texture follows a rounded radial falloff, not screen-aligned bands.
+        float fadeIn = Math.min(1.0F, age / 90.0F);
+        float fadeOut = Math.min(1.0F, (FLASH_DURATION_MS - age) / 240.0F);
+        float opacity = 0.85F * Math.max(0.0F, Math.min(fadeIn, fadeOut));
+        if (opacity <= 0.0F) return;
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, opacity);
         int width = graphics.guiWidth(), height = graphics.guiHeight();
-        int step = Math.max(6, Math.min(width, height) / 28);
-        for (int i = 0; i < 4; i++) {
-            int inset = i * step;
-            int alpha = Math.round((14 - i * 2.5F) * fade);
-            int color = alpha << 24 | 0x15080B;
-            graphics.fill(inset, inset, width - inset, inset + step, color);
-            graphics.fill(inset, height - inset - step, width - inset, height - inset, color);
-            graphics.fill(inset, inset + step, inset + step, height - inset - step, color);
-            graphics.fill(width - inset - step, inset + step, width - inset, height - inset - step, color);
-        }
+        graphics.blit(BLOCK_VIGNETTE, 0, 0, 0, 0, width, height, width, height);
+        graphics.flush();
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+        RenderSystem.disableBlend();
     }
 
     private static void renderScreenFlash(net.minecraft.client.gui.GuiGraphics graphics, long age) {
-        float progress = age / 260.0F;
+        float progress = age / (hitResult == 2 ? 260.0F : 190.0F);
         float intensity = GuardConfig.FLASH_STRENGTH.get() / 100.0F * (hitResult == 2 ? 1.0F : 0.82F);
         int alpha = Math.round(255.0F * 0.85F * (1.0F - progress) * intensity);
         graphics.fill(0, 0, graphics.guiWidth(), graphics.guiHeight(), alpha << 24 | 0xFFFFFF);

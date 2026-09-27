@@ -5,12 +5,17 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
+import java.util.List;
 
 public final class GuardSounds {
     public static final DeferredRegister<SoundEvent> EVENTS = DeferredRegister.create(BuiltInRegistries.SOUND_EVENT, MallardGuard.ID);
-    public static final DeferredHolder<SoundEvent, SoundEvent> PARRY = register("parry");
-    public static final DeferredHolder<SoundEvent, SoundEvent> PERFECT = register("perfect");
-    public static final DeferredHolder<SoundEvent, SoundEvent> BLOCK = register("block");
+    // Separate events let the server choose a variant without repeating the last one.
+    public static final List<DeferredHolder<SoundEvent, SoundEvent>> PARRY = List.of(
+        register("parry_1"), register("parry_2"), register("parry_3"),
+        register("parry_4"), register("parry_5"), register("parry_6"));
+    public static final List<DeferredHolder<SoundEvent, SoundEvent>> PERFECT = PARRY;
+    public static final List<DeferredHolder<SoundEvent, SoundEvent>> BLOCK = List.of(
+        register("block_1"), register("block_2"), register("block_3"), register("block_4"), register("block_5"));
 
     private GuardSounds() {}
 

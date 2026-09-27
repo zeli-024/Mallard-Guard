@@ -3,6 +3,7 @@ package dev.zeli.mallardguard.client;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import dev.zeli.mallardguard.MallardGuard;
+import dev.zeli.mallardguard.GuardItemRules;
 import dev.zeli.mallardguard.mixin.client.ItemInHandRendererAccessor;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.HumanoidModel;
@@ -15,6 +16,7 @@ import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderHandEvent;
 
@@ -22,16 +24,17 @@ import net.neoforged.neoforge.client.event.RenderHandEvent;
 public final class GuardAnimationHandler {
     private GuardAnimationHandler() {}
 
-    @SubscribeEvent
+    @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void renderFirstPerson(RenderHandEvent event) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
-        if (player == null || event.getHand() != InteractionHand.MAIN_HAND || !GuardClient.isStanceActive()) return;
+        if (player == null || event.getHand() != GuardClient.guardHand(player)) return;
         ItemStack stack = event.getItemStack();
-        if (stack.isEmpty() || !GuardClient.isCurrentMainHand(stack)) return;
+        // Let shield-like items keep their own first-person animation in every phase.
+        if (stack.isEmpty() || GuardItemRules.shieldLike(stack) || !GuardClient.isCurrentGuardHand(stack)) return;
 
         ItemInHandRenderer renderer = minecraft.getEntityRenderDispatcher().getItemInHandRenderer();
-        HumanoidArm arm = player.getMainArm();
+        HumanoidArm arm = event.getHand() == InteractionHand.MAIN_HAND ? player.getMainArm() : player.getMainArm().getOpposite();
         boolean right = arm == HumanoidArm.RIGHT;
         PoseStack pose = event.getPoseStack();
         pose.pushPose();

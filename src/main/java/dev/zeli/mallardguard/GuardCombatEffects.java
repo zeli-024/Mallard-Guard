@@ -65,16 +65,17 @@ public final class GuardCombatEffects {
             || !(hit.getEntity() instanceof ServerPlayer player) || event.getProjectile().getOwner() == player) return;
         Projectile projectile = event.getProjectile();
         GuardState.Result result = GuardState.handleProjectile(player, projectile);
-        if (result != GuardState.Result.PERFECT && result != GuardState.Result.PARRY) return;
+        if (result == GuardState.Result.NONE) return;
         event.setCanceled(true);
         Entity owner = projectile.getOwner();
         Vec3 direction;
         if (result == GuardState.Result.PERFECT && owner != null && owner != player) {
             direction = owner.getEyePosition().subtract(player.getEyePosition());
         } else {
-            direction = new Vec3(player.getRandom().nextDouble() - 0.5D,
-                player.getRandom().nextDouble() * 0.65D - 0.1D,
-                player.getRandom().nextDouble() - 0.5D);
+            // Keep a firm horizontal component; downward deflections should be as common as upward ones.
+            double angle = player.getRandom().nextDouble() * Math.PI * 2.0D;
+            direction = new Vec3(Math.cos(angle), player.getRandom().nextDouble() * 0.32D - 0.20D,
+                Math.sin(angle));
         }
         if (direction.lengthSqr() < 1.0E-6D) direction = player.getLookAngle();
         direction = direction.normalize();
@@ -84,8 +85,8 @@ public final class GuardCombatEffects {
         projectile.shoot(direction.x, direction.y, direction.z, (float) speed, 0.0F);
         projectile.hasImpulse = true;
         GuardEffects.onHit(player, player.damageSources().playerAttack(player), result);
-        PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : 1));
+        PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : result == GuardState.Result.BLOCK ? 3 : 1));
         GuardState.wear(player, result);
-        pushDefender(player, hit.getLocation());
+        if (result != GuardState.Result.BLOCK) pushDefender(player, hit.getLocation());
     }
 }

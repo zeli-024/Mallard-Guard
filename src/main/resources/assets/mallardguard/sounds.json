@@ -1,23 +1,13 @@
 {
-  "parry": {
-    "sounds": [
-      "mallardguard:parry_1",
-      "mallardguard:parry_2",
-      "mallardguard:parry_3"
-    ]
-  },
-  "perfect": {
-    "sounds": [
-      "mallardguard:perfect_1",
-      "mallardguard:perfect_2",
-      "mallardguard:perfect_3"
-    ]
-  },
-  "block": {
-    "sounds": [
-      "mallardguard:block_1",
-      "mallardguard:block_2",
-      "mallardguard:block_3"
-    ]
-  }
+  "parry_1": { "sounds": ["mallardguard:parry_1"] },
+  "parry_2": { "sounds": ["mallardguard:parry_2"] },
+  "parry_3": { "sounds": ["mallardguard:parry_3"] },
+  "parry_4": { "sounds": ["mallardguard:parry_4"] },
+  "parry_5": { "sounds": ["mallardguard:parry_5"] },
+  "parry_6": { "sounds": ["mallardguard:parry_6"] },
+  "block_1": { "sounds": ["mallardguard:block_1"] },
+  "block_2": { "sounds": ["mallardguard:block_2"] },
+  "block_3": { "sounds": ["mallardguard:block_3"] },
+  "block_4": { "sounds": ["mallardguard:block_4"] },
+  "block_5": { "sounds": ["mallardguard:block_5"] }
 }

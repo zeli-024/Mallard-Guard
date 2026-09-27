@@ -3,6 +3,7 @@ package dev.zeli.mallardguard.client;
 import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.GuardItemRules;
 import dev.zeli.mallardguard.GuardPackets;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -17,179 +18,234 @@ import java.util.function.BooleanSupplier;
 
 public final class GuardConfigScreen extends Screen {
     private final boolean operator;
+    private final Screen parent;
     private int page;
-    private boolean parry, block, hud, shieldEffects;
-    private boolean hitSounds, hitParticles, screenFlash, screenShake;
+    private int layoutTop, panelLeft, panelWidth, firstRow, visibleRows;
+    private static final int ROW_STEP = 32;
+    private static final String[] TABS = {"Parry", "Blocking", "Effects", "Audio", "Items"};
+    private boolean parry, block, parryDrowningFire, hud, shieldEffects;
+    private boolean hitParticles;
     private int flashStrength, shakeStrength;
     private int masterVolume, perfectVolume, parryVolume, blockVolume;
     private int perfect, window, recharge, angle, reductionPercent;
     private int followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability;
     private boolean fallParry, fallBreakBlocks, parryExplosions, perfectExplosionsOnly, blockExplosions;
-    private boolean parryProjectiles, blockProjectiles, defenderKnockback;
+    private boolean parryProjectiles, blockProjectiles;
     private int fallBlastStrength, fallLaunchPower, knockbackStrength;
-    private boolean allowUsableItems;
-    private String includedItems, excludedItems;
+    private int guardMovementPercent, blockDeflectChance;
+    private int regularOrbSize, perfectOrbSize, regularOrbOpacity, perfectOrbOpacity;
+    private boolean allowUsableItems, preferOffhand;
+    private String includedItems, excludedItems, shieldItems;
     private boolean invalidItemRules;
 
-    public GuardConfigScreen(GuardPackets.Settings settings) {
+    public GuardConfigScreen(GuardPackets.Settings settings, Screen parent) {
         super(Component.literal("Mallard Guard"));
+        this.parent = parent;
         operator = settings.operator();
-        parry = settings.parry(); block = settings.block();
+        parry = settings.parry(); block = settings.block(); parryDrowningFire = settings.parryDrowningFire();
         perfect = settings.perfect(); window = settings.window(); recharge = settings.recharge();
         angle = settings.angle(); reductionPercent = settings.reductionPercent();
-        followUp = settings.followUp(); parryReturnPercent = settings.parryReturnPercent();
-        perfectReturnPercent = settings.perfectReturnPercent(); parryWear = settings.parryWear();
+        followUp = settings.followUp(); parryReturnPercent = Math.clamp(settings.parryReturnPercent(), 0, 200);
+        perfectReturnPercent = Math.clamp(settings.perfectReturnPercent(), 0, 200); parryWear = settings.parryWear();
         perfectWear = settings.perfectWear(); blockWear = settings.blockWear(); addedDurability = settings.addedDurability();
         hud = GuardConfig.HUD.get();
         shieldEffects = GuardConfig.SHIELD_EFFECTS.get();
-        hitSounds = settings.hitSounds();
         hitParticles = settings.hitParticles();
-        masterVolume = settings.masterVolume(); perfectVolume = settings.perfectVolume();
+        masterVolume = settings.hitSounds() ? settings.masterVolume() : 0; perfectVolume = settings.perfectVolume();
         parryVolume = settings.parryVolume(); blockVolume = settings.blockVolume();
-        screenFlash = GuardConfig.SCREEN_FLASH.get();
-        flashStrength = GuardConfig.FLASH_STRENGTH.get();
-        screenShake = GuardConfig.SCREEN_SHAKE.get();
-        shakeStrength = GuardConfig.SHAKE_STRENGTH.get();
+        flashStrength = GuardConfig.SCREEN_FLASH.get() ? GuardConfig.FLASH_STRENGTH.get() : 0;
+        shakeStrength = GuardConfig.SCREEN_SHAKE.get() ? GuardConfig.SHAKE_STRENGTH.get() : 0;
         fallParry = settings.fallParry(); fallBreakBlocks = settings.fallBreakBlocks();
         fallBlastStrength = settings.fallBlastStrength(); fallLaunchPower = settings.fallLaunchPower();
         parryExplosions = settings.parryExplosions(); perfectExplosionsOnly = settings.perfectExplosionsOnly();
         blockExplosions = settings.blockExplosions(); parryProjectiles = settings.parryProjectiles();
-        blockProjectiles = settings.blockProjectiles(); defenderKnockback = settings.defenderKnockback();
-        knockbackStrength = settings.knockbackStrength();
+        blockProjectiles = settings.blockProjectiles();
+        knockbackStrength = settings.defenderKnockback() ? settings.knockbackStrength() : 0;
+        guardMovementPercent = settings.guardMovementPercent();
+        blockDeflectChance = settings.blockDeflectChance();
+        regularOrbSize = GuardConfig.REGULAR_ORB_SIZE.get();
+        perfectOrbSize = GuardConfig.PERFECT_ORB_SIZE.get();
+        regularOrbOpacity = GuardConfig.REGULAR_ORB_OPACITY.get();
+        perfectOrbOpacity = GuardConfig.PERFECT_ORB_OPACITY.get();
         allowUsableItems = settings.allowUsableItems();
-        includedItems = settings.includedItems(); excludedItems = settings.excludedItems();
+        preferOffhand = GuardConfig.PREFER_OFFHAND.get();
+        includedItems = settings.includedItems(); excludedItems = settings.excludedItems(); shieldItems = settings.shieldItems();
     }
 
     @Override protected void init() {
-        int left = width / 2 - 110;
-        int top = height / 2 - 123;
-        String[] pages = {"Timing", "Combat", "Effects", "Audio", "Hits", "Items"};
-        for (int i = 0; i < pages.length; i++) {
-            final int target = i;
-            Button tab = addRenderableWidget(Button.builder(Component.literal(pages[i]), b -> {
-                page = target;
+        panelWidth = Math.min(440, width - 18);
+        panelLeft = (width - panelWidth) / 2;
+        visibleRows = Math.max(3, Math.min(8, (height - 90) / 36));
+        layoutTop = Math.max(2, (height - (58 + visibleRows * ROW_STEP + 47)) / 2);
+        // Show whole, non-overlapping pages when the window size changes.
+        firstRow = Math.clamp((firstRow / visibleRows) * visibleRows, 0, lastPageStart());
+        int gap = 10;
+        int tabWidth = (panelWidth - 4 * gap) / TABS.length;
+        for (int i = 0; i < TABS.length; i++) {
+            final int selected = i;
+            Button tab = addRenderableWidget(Button.builder(Component.literal(page == i ? "• " + TABS[i] : TABS[i]), b -> {
+                page = selected;
+                firstRow = 0;
                 rebuildWidgets();
-            }).bounds(left + i * 44, top + 20, 43, 20).build());
-            tab.active = page != i;
+            }).bounds(panelLeft + i * (tabWidth + gap), layoutTop + 28, tabWidth, 20).build());
+            tip(tab, page == i ? "Current section: " + TABS[i] + "." : "Show " + TABS[i].toLowerCase(java.util.Locale.ROOT) + " settings.");
         }
-        if (page == 1) {
-            slider(left, top + 44, "Follow-up safety", followUp, 0, 20, " ticks", "After a successful parry, automatically parry additional melee hits for this many ticks. The stance still ends immediately; follow-up hits do not extend the timer. 0 disables it.", v -> followUp = v);
-            slider(left, top + 68, "Parry retaliation", parryReturnPercent, 0, 300, "%", "Damage returned to the attacker by a regular parry, as a percentage of the incoming hit. Follow-up safety uses this value. 0 disables retaliation.", v -> parryReturnPercent = v);
-            slider(left, top + 92, "Perfect retaliation", perfectReturnPercent, 0, 300, "%", "Damage returned to the attacker by a perfect parry, as a percentage of the incoming hit. 0 disables retaliation.", v -> perfectReturnPercent = v);
-            slider(left, top + 116, "Parry item wear", parryWear, 0, 100, "", "Base durability lost from a regular parry or a follow-up safety parry. Fragile items can lose more. 0 disables this wear.", v -> parryWear = v);
-            slider(left, top + 140, "Perfect item wear", perfectWear, 0, 100, "", "Base durability lost from a perfect parry. Fragile items can lose more. 0 disables this wear.", v -> perfectWear = v);
-            slider(left, top + 164, "Block item wear", blockWear, 0, 100, "", "Base durability lost each time a hit is caught during held block. Fragile items can lose more. 0 disables this wear.", v -> blockWear = v);
-            slider(left, top + 188, "Added durability", addedDurability, 10, 1000, "", "Maximum durability granted to eligible attack items that normally have none, when they first take parry or block wear.", v -> addedDurability = v);
-        } else if (page == 0) {
-            Button parryButton = addRenderableWidget(Button.builder(label("Parry", parry), b -> {
-                parry = !parry; b.setMessage(label("Parry", parry));
-            }).bounds(left, top + 44, 105, 20).build());
-            Button blockButton = addRenderableWidget(Button.builder(label("Held block", block), b -> {
-                block = !block; b.setMessage(label("Held block", block));
-            }).bounds(left + 115, top + 44, 105, 20).build());
-            tip(parryButton, "Enables the short parry window when you press the configured guard key (right-click by default) with an eligible attack item.");
-            tip(blockButton, "Enables the held guarding stance after the parry window while the configured guard key stays pressed. A valid hit during held block has its damage reduced.");
-            parryButton.active = blockButton.active = operator;
-            slider(left, top + 68, "Perfect window", perfect, 0, 5, " ticks", "The opening part of a parry attempt that counts as a perfect parry. 0 disables perfect parries. Included within the total parry window.", v -> perfect = v);
-            slider(left, top + 92, "Parry window", window, 1, 10, " ticks", "Total time after pressing the configured guard key when an eligible melee hit can be parried, including the perfect window.", v -> window = v);
-            slider(left, top + 116, "Recharge", recharge, 1, 60, " ticks", "Cooldown before you can begin another parry attempt. The shield refills while you are not holding block.", v -> recharge = v);
-            slider(left, top + 140, "Facing angle", angle, 0, 360, "°", "How wide the valid attack area is around your view direction. 180° covers the front half; 360° allows melee hits from every direction. Attacker must still be close.", v -> angle = v);
-            slider(left, top + 164, "Block reduction", reductionPercent, 0, 100, "%", "Percentage of incoming melee damage prevented during held block. 50% halves the damage; 100% prevents it all.", v -> reductionPercent = v);
+
+        if (page == 0) {
+            toggle(0, 0, "Parrying", () -> parry, v -> parry = v, true,
+                "Enable timed parries. Guard defaults to Right Click and can be rebound in Controls under Mallard Guard.");
+            slider(1, 0, "Perfect window", perfect, 0, 5, " ticks", 1, true, v -> perfect = v,
+                "Ticks at the start of a parry that count as perfect. 0 disables perfect parries.");
+            slider(0, 1, "Parry window", window, 1, 10, " ticks", 1, true, v -> window = v,
+                "How long a parry can catch a hit, including the perfect window.");
+            slider(1, 1, "Recharge", recharge, 1, 60, " ticks", 1, true, v -> recharge = v,
+                "Time before another parry can begin after this attempt.");
+            slider(0, 2, "Facing angle", angle, 0, 360, "°", 1, true, v -> angle = v,
+                "Which directions attacks can come from. 180° covers your front half; 360° covers all directions.");
+            slider(1, 2, "Follow-up parries", followUp, 0, 20, " ticks", 1, true, v -> followUp = v,
+                "Extra time to catch melee hits after a successful parry. 0 disables follow-ups; follow-up hits do not extend the timer.");
+            slider(0, 3, "Parry retaliation", parryReturnPercent, 0, 200, "%", 1, true, v -> parryReturnPercent = v,
+                "Damage dealt back on a regular parry, as a percentage of the incoming hit. 0% disables it; 200% doubles it.");
+            slider(1, 3, "Perfect retaliation", perfectReturnPercent, 0, 200, "%", 1, true, v -> perfectReturnPercent = v,
+                "Damage dealt back on a perfect parry, as a percentage of the incoming hit. 0% disables it; 200% doubles it.");
+            toggle(0, 4, "Projectile parry", () -> parryProjectiles, v -> parryProjectiles = v, true,
+                "Let parries deflect projectiles. Regular parries send them in a random direction; perfect parries aim them at the attacker.");
+            toggle(1, 4, "Fall parry", () -> fallParry, v -> fallParry = v, true,
+                "Let a timed parry prevent fall damage while looking at least 40° below the horizon, then launch forward. Perfect timing launches farther.");
+            toggle(0, 5, "Explosion parry", () -> parryExplosions, v -> parryExplosions = v, true,
+                "Let a timed parry prevent explosion damage.");
+            toggle(1, 5, "Explosions: perfect only", () -> perfectExplosionsOnly, v -> perfectExplosionsOnly = v, true,
+                "Require perfect timing to parry explosions. Only applies when explosion parrying is enabled.");
+            slider(0, 6, "Fall blast", fallBlastStrength, 0, 500, "%", 1, true, v -> fallBlastStrength = v,
+                "Size of the blast after parrying a fall of more than ten blocks. 0% disables the blast.");
+            slider(1, 6, "Fall launch", fallLaunchPower, 0, 300, "%", 1, true, v -> fallLaunchPower = v,
+                "How strongly a fall parry launches you. Perfect parries launch farther. 0% prevents damage without launching.");
+            toggle(0, 7, "Fall blast breaks blocks", () -> fallBreakBlocks, v -> fallBreakBlocks = v, true,
+                "Allow the blast after a long fall parry to break terrain.");
+            toggle(0, 8, "Parry drowning and fire", () -> parryDrowningFire, v -> parryDrowningFire = v, true,
+                "Let timed parries stop drowning and fire damage, including lava. Other damage types remain parryable when this is off.");
+            slider(1, 7, "Parry pushback", knockbackStrength, 0, 200, "%", 1, true, v -> knockbackStrength = v,
+                "How far a successful parry pushes you away from the hit. 0% disables pushback.");
+        } else if (page == 1) {
+            toggle(0, 0, "Blocking", () -> block, v -> block = v, true,
+                "Keep guarding when you hold the Guard key past the parry window. Guard defaults to Right Click and can be rebound in Controls.");
+            slider(1, 0, "Damage reduction", reductionPercent, 0, 100, "%", 1, true, v -> reductionPercent = v,
+                "Damage prevented by held block. 50% halves the damage; 100% prevents it.");
+            slider(0, 1, "Guard movement", guardMovementPercent, 0, 100, "%", 1, true, v -> guardMovementPercent = v,
+                "Your speed during perfect parry, regular parry and block. This slowdown no longer changes camera FOV. 100% removes the slowdown.");
+            slider(1, 1, "Block deflect chance", blockDeflectChance, 0, 100, "%", 1, true, v -> blockDeflectChance = v,
+                "Chance that held block sends any incoming projectile in a random direction. 0% disables deflection.");
+            toggle(0, 2, "Block projectiles", () -> blockProjectiles, v -> blockProjectiles = v, true,
+                "Let held block reduce damage from projectiles that are not deflected.");
+            toggle(1, 2, "Block explosions", () -> blockExplosions, v -> blockExplosions = v, true,
+                "Let held block reduce explosion damage using your damage reduction setting.");
         } else if (page == 2) {
-            Button soundsButton = addRenderableWidget(Button.builder(label("Hit sounds", hitSounds), b -> {
-                hitSounds = !hitSounds; b.setMessage(label("Hit sounds", hitSounds));
-            }).bounds(left, top + 44, 105, 20).build());
-            tip(soundsButton, "Plays one of the supplied sounds when a parry, perfect parry, or held block catches a hit. Other nearby players can hear it. Server setting.");
-            Button particlesButton = addRenderableWidget(Button.builder(label("Hit particles", hitParticles), b -> {
-                hitParticles = !hitParticles; b.setMessage(label("Hit particles", hitParticles));
-            }).bounds(left + 115, top + 44, 105, 20).build());
-            tip(particlesButton, "Flying anvil sparks and one white firework orb on each parry; perfect parries also emit star-shaped sparks. Blocks emit none. Nearby players see these effects. Server setting.");
-            soundsButton.active = particlesButton.active = operator;
-            tip(addRenderableWidget(Button.builder(label("Shield", hud), b -> {
-                hud = !hud; b.setMessage(label("Shield", hud));
-            }).bounds(left, top + 68, 105, 20).build()), "Shows the shield centered below the crosshair while parrying or recharging. Only changes your own display.");
-            tip(addRenderableWidget(Button.builder(label("Shield effects", shieldEffects), b -> {
-                shieldEffects = !shieldEffects; b.setMessage(label("Shield effects", shieldEffects));
-            }).bounds(left + 115, top + 68, 105, 20).build()), "Flashes the shield gold for a perfect parry, white for a regular parry, or red for a held block. The shield shakes and grows; perfect parries send out a large gold echo. Blocks briefly dim the screen edges. Only changes your own display.");
-            tip(addRenderableWidget(Button.builder(label("Screen flash", screenFlash), b -> {
-                screenFlash = !screenFlash; b.setMessage(label("Screen flash", screenFlash));
-            }).bounds(left, top + 92, 220, 20).build()), "A brief white screen flash behind the shield and its echo after regular and perfect parries. Blocks do not flash. Only changes your own display.");
-            Slider strength = addRenderableWidget(new Slider(left, top + 116, 220, "Flash strength", flashStrength, 0, 100, "%", v -> flashStrength = v));
-            tip(strength, "Brightness of the white screen flash. 0% disables it. Only changes your own display.");
-            tip(addRenderableWidget(Button.builder(label("Camera shake", screenShake), b -> {
-                screenShake = !screenShake; b.setMessage(label("Camera shake", screenShake));
-            }).bounds(left, top + 140, 220, 20).build()), "Briefly tilts your view after a hit: strongest for blocks, moderate for perfect parries, and lighter for regular parries. Only changes your own display.");
-            Slider shake = addRenderableWidget(new Slider(left, top + 164, 220, "Shake strength", shakeStrength, 0, 100, "%", v -> shakeStrength = v));
-            tip(shake, "Strength of camera shake after a successful guard. 0% disables it. Only changes your own display.");
-        } else if (page == 4) {
-            sourceToggle(left, top + 44, "Fall parry", () -> fallParry, v -> fallParry = v,
-                "Parry fall damage. Launches in your look direction; perfect timing launches farther. Held block does not catch falls.");
-            sourceToggle(left + 115, top + 44, "Break terrain", () -> fallBreakBlocks, v -> fallBreakBlocks = v,
-                "Whether the blast from a fall of more than ten blocks can break terrain. Server setting.");
-            slider(left, top + 68, "Fall blast", fallBlastStrength, 0, 500, "%",
-                "Blast radius after a fall parry from more than ten blocks, relative to Parry It's normal scaling. 0% disables the blast. Server setting.", v -> fallBlastStrength = v);
-            slider(left, top + 92, "Fall launch", fallLaunchPower, 0, 300, "%",
-                "Launch power after a fall parry. Perfect falls launch twice as far. 0% absorbs the fall without launching. Server setting.", v -> fallLaunchPower = v);
-            sourceToggle(left, top + 116, "Explosion parry", () -> parryExplosions, v -> parryExplosions = v,
-                "Let a timed parry cancel explosion damage. The adjacent option can restrict this to perfect parries. Server setting.");
-            sourceToggle(left + 115, top + 116, "Perfect only", () -> perfectExplosionsOnly, v -> perfectExplosionsOnly = v,
-                "Explosion parrying requires a perfect timing window. A regular parry will not cancel explosion damage. Server setting.");
-            sourceToggle(left, top + 140, "Explosion block", () -> blockExplosions, v -> blockExplosions = v,
-                "Held guard reduces explosion damage using the normal block reduction. Independent of explosion parrying. Server setting.");
-            sourceToggle(left + 115, top + 140, "Projectile block", () -> blockProjectiles, v -> blockProjectiles = v,
-                "Held guard reduces incoming projectile damage using the normal block reduction. Server setting.");
-            sourceToggle(left, top + 164, "Projectile parry", () -> parryProjectiles, v -> parryProjectiles = v,
-                "Parries deflect projectile entities. Regular parries send them randomly; perfect parries aim them back toward the shooter. Server setting.");
-            sourceToggle(left + 115, top + 164, "Defender push", () -> defenderKnockback, v -> defenderKnockback = v,
-                "Pushes you away from melee, explosion, and projectile impacts after a successful parry. Fall parries use their own launch. Server setting.");
-            slider(left, top + 188, "Defender push", knockbackStrength, 0, 200, "%",
-                "Strength of the push you receive when parrying an impact. 0% disables it. Server setting.", v -> knockbackStrength = v);
-        } else if (page == 5) {
-            Button usable = addRenderableWidget(Button.builder(label("Allow usable items", allowUsableItems), b -> {
-                allowUsableItems = !allowUsableItems;
-                b.setMessage(label("Allow usable items", allowUsableItems));
-            }).bounds(left, top + 44, 220, 20).build());
-            tip(usable, "Whether attack-damage items with a hold-to-use action can also start guarding. Enabled by default. An explicit inclusion can still admit an item when off. Server setting.");
-            usable.active = operator;
-            EditBox included = addRenderableWidget(new EditBox(font, left, top + 88, 220, 20, Component.literal("Included items and tags")));
-            included.setMaxLength(1024);
-            included.setValue(includedItems);
-            included.setResponder(s -> { includedItems = s; invalidItemRules = false; });
-            included.setEditable(operator);
-            tip(included, "Comma-separated item IDs or #item tags that can guard even without an attack-damage modifier. Example: minecraft:stick, #minecraft:swords. Exclusions always win.");
-            EditBox excluded = addRenderableWidget(new EditBox(font, left, top + 136, 220, 20, Component.literal("Excluded items and tags")));
-            excluded.setMaxLength(1024);
-            excluded.setValue(excludedItems);
-            excluded.setResponder(s -> { excludedItems = s; invalidItemRules = false; });
-            excluded.setEditable(operator);
-            tip(excluded, "Comma-separated item IDs or #item tags that cannot guard. Example: minecraft:bow, #yourmod:no_guard. Exclusions override inclusions.");
+            toggle(0, 0, "Sparks and flashes", () -> hitParticles, v -> hitParticles = v, true,
+                "Show sparks and flashes on parries. Perfect parries also have star-shaped sparks. Blocks do not create particles. Nearby players can see these effects.");
+            toggle(1, 0, "Shield icon", () -> hud, v -> hud = v, false,
+                "Show the shield by your crosshair while guarding and recharging.");
+            toggle(0, 1, "Shield reactions", () -> shieldEffects, v -> shieldEffects = v, false,
+                "Glow when ready; expand on parry, with a larger echo on perfect. Blocking hits flash red with a rounded vignette, then the dark shield trembles and echoes until you let go.");
+            slider(1, 1, "Screen flash", flashStrength, 0, 100, "%", 1, false, v -> flashStrength = v,
+                "Strength of the brief white screen flash after parries. 0% disables it. Blocks never trigger it.");
+            slider(0, 2, "Camera shake", shakeStrength, 0, 100, "%", 1, false, v -> shakeStrength = v,
+                "Strength of camera shake after a hit. Blocking shakes the screen the most. 0% disables it.");
+            slider(1, 2, "Parry flash size", regularOrbSize, 0, 150, "%", 1, false, v -> regularOrbSize = v,
+                "Size of the bright flash on a regular parry. 0% hides this flash but keeps the sparks.");
+            slider(0, 3, "Perfect flash size", perfectOrbSize, 0, 150, "%", 1, false, v -> perfectOrbSize = v,
+                "Size of the bright flash on a perfect parry. 0% hides this flash but keeps the sparks.");
+            slider(1, 3, "Parry flash opacity", regularOrbOpacity, 0, 100, "%", 1, false, v -> regularOrbOpacity = v,
+                "How visible the regular parry flash is. 0% hides it.");
+            slider(0, 4, "Perfect flash opacity", perfectOrbOpacity, 0, 100, "%", 1, false, v -> perfectOrbOpacity = v,
+                "How visible the perfect parry flash is. 0% hides it.");
+        } else if (page == 3) {
+            slider(0, 0, "Master volume", masterVolume, 0, 200, "%", 1, true, v -> masterVolume = v,
+                "Volume of all Mallard Guard hit sounds. 0% mutes them; 200% reaches full game sound volume when an individual slider is at 100%.");
+            slider(1, 0, "Perfect volume", perfectVolume, 0, 200, "%", 1, true, v -> perfectVolume = v,
+                "Volume of perfect parry sounds, multiplied by the master volume. 0% mutes perfect parries.");
+            slider(0, 1, "Parry volume", parryVolume, 0, 200, "%", 1, true, v -> parryVolume = v,
+                "Volume of regular and follow-up parry sounds, multiplied by the master volume. 0% mutes them.");
+            slider(1, 1, "Block volume", blockVolume, 0, 200, "%", 1, true, v -> blockVolume = v,
+                "Volume of blocking sounds, multiplied by the master volume. 0% mutes them.");
         } else {
-            Button soundsButton = addRenderableWidget(Button.builder(label("Hit sounds", hitSounds), b -> {
-                hitSounds = !hitSounds; b.setMessage(label("Hit sounds", hitSounds));
-            }).bounds(left, top + 44, 220, 20).build());
-            tip(soundsButton, "Plays parry, perfect parry, and block sounds to nearby players. This switch mutes all three. Server setting.");
-            soundsButton.active = operator;
-            slider(left, top + 68, "Master volume", masterVolume, 0, 200, "%", "Controls all three guard hit sounds together. Multiplies their individual volumes. 0% mutes them; 100% is normal. Server setting.", v -> masterVolume = v);
-            slider(left, top + 92, "Perfect volume", perfectVolume, 0, 200, "%", "Volume of the perfect parry sound, multiplied by master volume. 0% mutes this result only. Server setting.", v -> perfectVolume = v);
-            slider(left, top + 116, "Parry volume", parryVolume, 0, 200, "%", "Volume of the regular and follow-up parry sounds, multiplied by master volume. 0% mutes this result only. Server setting.", v -> parryVolume = v);
-            slider(left, top + 140, "Block volume", blockVolume, 0, 200, "%", "Volume of the held block sound, multiplied by master volume. 0% mutes this result only. Server setting.", v -> blockVolume = v);
+            toggle(0, 0, "Allow usable weapons", () -> allowUsableItems, v -> allowUsableItems = v, true,
+                "Allow eligible weapons with a hold-to-use action to guard. Explicitly included items can still guard when this is off.");
+            toggle(1, 0, "Prefer offhand", () -> preferOffhand, v -> preferOffhand = v, false,
+                "When both hands hold eligible items, choose your offhand for guarding. When only one is eligible, use that hand.");
+            slider(0, 1, "Parry durability", parryWear, 0, 100, "%", 10, true, v -> parryWear = v,
+                "Maximum durability lost per regular or follow-up parry, rounded up. At 600 durability, 0.2% costs 2 points. 0% disables wear.");
+            slider(1, 1, "Perfect durability", perfectWear, 0, 100, "%", 10, true, v -> perfectWear = v,
+                "Maximum durability lost per perfect parry, rounded up. At 600 durability, 0.1% costs 1 point. 0% disables wear.");
+            slider(0, 2, "Block durability", blockWear, 0, 100, "%", 10, true, v -> blockWear = v,
+                "Maximum durability lost per blocked hit, rounded up. At 600 durability, 0.4% costs 3 points. 0% disables wear. Real shields use their own block wear.");
+            slider(1, 2, "Added durability", addedDurability, 10, 1000, "", 1, true, v -> addedDurability = v,
+                "Maximum durability given to eligible items that normally have none, when they first take wear.");
+            editBox(3, "Included items and tags", includedItems, v -> { includedItems = v; invalidItemRules = false; },
+                "Comma-separated item IDs or #item tags that may guard without an attack-damage modifier. Example: minecraft:stick, #minecraft:swords. Excluded items always win.");
+            editBox(4, "Excluded items and tags", excludedItems, v -> { excludedItems = v; invalidItemRules = false; },
+                "Comma-separated item IDs or #item tags that cannot guard. Excluded items win over included items.");
+            editBox(5, "Extra shields and tags", shieldItems, v -> { shieldItems = v; invalidItemRules = false; },
+                "Comma-separated item IDs or #item tags for other shield-like items. Shields and blocking items work automatically. Listed items parry first, then use their own blocking action while held; excluded items still win.");
         }
-        addRenderableWidget(Button.builder(Component.literal("Save & close"), b -> save()).bounds(left, top + 213, 105, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose()).bounds(left + 115, top + 213, 105, 20).build());
+
+        int footer = layoutTop + 58 + visibleRows * ROW_STEP;
+        Button previous = addRenderableWidget(Button.builder(Component.literal("Previous"), b -> {
+            firstRow = Math.max(0, firstRow - visibleRows);
+            rebuildWidgets();
+        }).bounds(width / 2 - 141, footer + 3, 85, 20).build());
+        Button next = addRenderableWidget(Button.builder(Component.literal("Next"), b -> {
+            firstRow = Math.min(lastPageStart(), firstRow + visibleRows);
+            rebuildWidgets();
+        }).bounds(width / 2 + 56, footer + 3, 85, 20).build());
+        previous.active = firstRow > 0;
+        next.active = firstRow + visibleRows < pageRows();
+        addRenderableWidget(Button.builder(Component.literal("Save & close"), b -> save())
+            .bounds(columnX(0), footer + 27, columnWidth(), 20).build());
+        addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose())
+            .bounds(columnX(1), footer + 27, columnWidth(), 20).build());
     }
 
-    private void sourceToggle(int x, int y, String name, BooleanSupplier current, Consumer<Boolean> change, String description) {
+    private int pageRows() {
+        return switch (page) { case 0 -> 9; case 1 -> 3; case 2 -> 5; case 3 -> 2; default -> 6; };
+    }
+
+    private int lastPageStart() { return ((pageRows() - 1) / visibleRows) * visibleRows; }
+
+    private int columnWidth() { return (panelWidth - 14) / 2; }
+    private int columnX(int column) { return panelLeft + column * (columnWidth() + 14); }
+    private boolean visible(int index) { return index >= firstRow && index < firstRow + visibleRows; }
+    private int row(int index) { return layoutTop + 58 + (index - firstRow) * ROW_STEP; }
+
+    private void toggle(int column, int index, String name, BooleanSupplier current,
+                        Consumer<Boolean> change, boolean server, String description) {
+        if (!visible(index)) return;
         Button button = addRenderableWidget(Button.builder(label(name, current.getAsBoolean()), b -> {
-            change.accept(!current.getAsBoolean()); b.setMessage(label(name, current.getAsBoolean()));
-        }).bounds(x, y, 105, 20).build());
-        tip(button, description);
-        button.active = operator;
+            change.accept(!current.getAsBoolean());
+            b.setMessage(label(name, current.getAsBoolean()));
+        }).bounds(columnX(column), row(index), columnWidth(), 22).build());
+        button.active = !server || operator;
+        tip(button, description + (server ? operator ? " Server setting." : " OP only: you can view this server setting, but cannot change it." : " Only changes your display."));
     }
 
-    private void slider(int left, int y, String name, int current, int min, int max, String suffix, String description, Change change) {
-        Slider slider = addRenderableWidget(new Slider(left, y, 220, name, current, min, max, suffix, change));
-        tip(slider, description);
-        slider.active = operator;
+    private void slider(int column, int index, String name, int current, int min, int max, String suffix,
+                        int divisor, boolean server, Change change, String description) {
+        if (!visible(index)) return;
+        Slider control = addRenderableWidget(new Slider(columnX(column), row(index), columnWidth(),
+            name, current, min, max, suffix, change, divisor));
+        control.active = !server || operator;
+        tip(control, description + (server ? operator ? " Server setting." : " OP only: you can view this server setting, but cannot change it." : " Only changes your display."));
+    }
+
+    private void editBox(int index, String name, String initial, Consumer<String> update, String description) {
+        if (!visible(index)) return;
+        EditBox box = addRenderableWidget(new EditBox(font, panelLeft, row(index) + 12, panelWidth, 18,
+            Component.literal(name)));
+        box.setMaxLength(1024);
+        box.setValue(initial);
+        box.setResponder(update);
+        box.setEditable(operator);
+        box.active = operator;
+        tip(box, description + (operator ? " Server setting." : " OP only: you can view this server setting, but cannot change it."));
     }
 
     private static void tip(AbstractWidget widget, String description) {
@@ -201,32 +257,47 @@ public final class GuardConfigScreen extends Screen {
     }
 
     private void save() {
-        if (operator && (!GuardItemRules.valid(includedItems) || !GuardItemRules.valid(excludedItems))) {
+        if (operator && (!GuardItemRules.valid(includedItems) || !GuardItemRules.valid(excludedItems) || !GuardItemRules.valid(shieldItems))) {
             invalidItemRules = true;
-            page = 5;
+            page = 4;
+            firstRow = (5 / visibleRows) * visibleRows;
             rebuildWidgets();
             return;
         }
         GuardConfig.HUD.set(hud);
         GuardConfig.SHIELD_EFFECTS.set(shieldEffects);
-        GuardConfig.SCREEN_FLASH.set(screenFlash);
+        GuardConfig.SCREEN_FLASH.set(flashStrength > 0);
         GuardConfig.FLASH_STRENGTH.set(flashStrength);
-        GuardConfig.SCREEN_SHAKE.set(screenShake);
+        GuardConfig.SCREEN_SHAKE.set(shakeStrength > 0);
         GuardConfig.SHAKE_STRENGTH.set(shakeStrength);
+        GuardConfig.PREFER_OFFHAND.set(preferOffhand);
+        GuardConfig.REGULAR_ORB_SIZE.set(regularOrbSize);
+        GuardConfig.PERFECT_ORB_SIZE.set(perfectOrbSize);
+        GuardConfig.REGULAR_ORB_OPACITY.set(regularOrbOpacity);
+        GuardConfig.PERFECT_ORB_OPACITY.set(perfectOrbOpacity);
         GuardConfig.CLIENT_SPEC.save();
-        if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, perfect, window, recharge, angle, reductionPercent, followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability, hitSounds, hitParticles, masterVolume, perfectVolume, parryVolume, blockVolume, fallParry, fallBreakBlocks, fallBlastStrength, fallLaunchPower, parryExplosions, perfectExplosionsOnly, blockExplosions, parryProjectiles, blockProjectiles, defenderKnockback, knockbackStrength, allowUsableItems, includedItems, excludedItems));
+        if (operator) PacketDistributor.sendToServer(new GuardPackets.Save(parry, block, parryDrowningFire, perfect, window, recharge, angle, reductionPercent, followUp, parryReturnPercent, perfectReturnPercent, parryWear, perfectWear, blockWear, addedDurability, masterVolume > 0, hitParticles, masterVolume, perfectVolume, parryVolume, blockVolume, fallParry, fallBreakBlocks, fallBlastStrength, fallLaunchPower, parryExplosions, perfectExplosionsOnly, blockExplosions, parryProjectiles, blockProjectiles, knockbackStrength > 0, knockbackStrength, guardMovementPercent, blockDeflectChance, allowUsableItems, includedItems, excludedItems, shieldItems));
         onClose();
     }
 
     @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         super.render(graphics, mouseX, mouseY, delta);
-        graphics.drawCenteredString(font, title, width / 2, height / 2 - 121, 0xFFFFFF);
-        if (page == 5) {
-            int left = width / 2 - 110, top = height / 2 - 123;
-            graphics.drawString(font, "Include IDs or #tags (comma-separated)", left, top + 76, 0xCCCCCC);
-            graphics.drawString(font, "Exclude IDs or #tags (takes priority)", left, top + 124, 0xCCCCCC);
-            graphics.drawString(font, invalidItemRules ? "Invalid item ID or tag. Check commas." : "Default: items with attack damage.", left, top + 164, invalidItemRules ? 0xFF6666 : 0xAAAAAA);
+        graphics.drawCenteredString(font, title, width / 2, layoutTop + 8, 0xFFFFFF);
+        if (!operator) graphics.drawCenteredString(font, "Gray settings require OP", width / 2, layoutTop + 18, 0xAAAAAA);
+        int footer = layoutTop + 58 + visibleRows * ROW_STEP;
+        graphics.drawCenteredString(font, "Page " + (firstRow / visibleRows + 1) + " / "
+            + ((pageRows() - 1) / visibleRows + 1), width / 2, footer + 9, 0xCCCCCC);
+        if (page == 4) {
+            if (visible(3)) graphics.drawString(font, "Included items and tags", panelLeft, row(3), operator ? 0xCCCCCC : 0x777777);
+            if (visible(4)) graphics.drawString(font, "Excluded items and tags", panelLeft, row(4), operator ? 0xCCCCCC : 0x777777);
+            if (visible(5)) graphics.drawString(font, "Extra shields and tags", panelLeft, row(5), operator ? 0xCCCCCC : 0x777777);
+            if (invalidItemRules) graphics.drawCenteredString(font, "Check the item IDs and commas.", width / 2,
+                layoutTop + 50, 0xFF6666);
         }
+    }
+
+    @Override public void onClose() {
+        Minecraft.getInstance().setScreen(parent);
     }
 
     private interface Change { void accept(int value); }
@@ -234,16 +305,22 @@ public final class GuardConfigScreen extends Screen {
     private static final class Slider extends AbstractSliderButton {
         private final String name, suffix;
         private final int min, max;
+        private final int divisor;
         private final Change change;
 
         private Slider(int x, int y, int width, String name, int current, int min, int max, String suffix, Change change) {
+            this(x, y, width, name, current, min, max, suffix, change, 1);
+        }
+
+        private Slider(int x, int y, int width, String name, int current, int min, int max, String suffix, Change change, int divisor) {
             super(x, y, width, 20, Component.empty(), (double) (current - min) / (max - min));
-            this.name = name; this.min = min; this.max = max; this.suffix = suffix; this.change = change;
+            this.name = name; this.min = min; this.max = max; this.suffix = suffix; this.change = change; this.divisor = divisor;
             updateMessage();
         }
 
         @Override protected void updateMessage() {
-            setMessage(Component.literal(name + ": " + (min + (int) Math.round(value * (max - min))) + suffix));
+            int shown = min + (int) Math.round(value * (max - min));
+            setMessage(Component.literal(name + ": " + (divisor == 1 ? Integer.toString(shown) : String.format(java.util.Locale.ROOT, divisor == 10 ? "%.1f" : "%.2f", shown / (double) divisor)) + suffix));
         }
 
         @Override protected void applyValue() {

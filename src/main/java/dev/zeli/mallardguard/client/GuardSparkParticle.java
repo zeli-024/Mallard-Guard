@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.zeli.mallardguard.GuardParticles;
 import dev.zeli.mallardguard.MallardGuard;
 import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.particle.Particle;
 import net.minecraft.client.particle.ParticleProvider;
@@ -11,6 +12,10 @@ import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.particle.SpriteSet;
 import net.minecraft.client.particle.TextureSheetParticle;
 import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.util.Mth;
@@ -19,11 +24,18 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
-import org.joml.Quaternionf;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import org.joml.Vector3f;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 
 @EventBusSubscriber(modid = MallardGuard.ID, value = Dist.CLIENT)
 public final class GuardSparkParticle extends TextureSheetParticle {
+    // Sodium 0.8.x replaces the normal particle batch. Keep the physics in
+    // ParticleEngine and draw both streaks and star sprites as world geometry.
+    private static final Set<GuardSparkParticle> SPARKS = Collections.newSetFromMap(new IdentityHashMap<>());
+    private static final RenderType SPARK_RENDER_TYPE = RenderType.entityTranslucent(TextureAtlas.LOCATION_PARTICLES);
     private final SpriteSet sprites;
     private final boolean flash;
     private final float crossX, crossZ;
@@ -37,10 +49,12 @@ public final class GuardSparkParticle extends TextureSheetParticle {
         this.flash = flash;
         this.olderX = x; this.olderY = y; this.olderZ = z;
         if (flash) {
-            this.hasPhysics = false;
-            this.lifetime = 3 + random.nextInt(4);
+            // Stars travel and bounce like streak sparks, while keeping their sprite shape.
+            this.hasPhysics = true;
+            this.lifetime = 11 + random.nextInt(5);
+            this.gravity = 0.72F;
             this.quadSize = 0.125F;
-            this.friction = 0.96F;
+            this.friction = 0.98F;
             this.xd = xd; this.yd = yd; this.zd = zd;
             this.crossX = this.crossZ = 1.0F;
         } else {
@@ -69,30 +83,41 @@ public final class GuardSparkParticle extends TextureSheetParticle {
         olderX = xo; olderY = yo; olderZ = zo;
         double falling = yd;
         super.tick();
-        if (!isAlive()) return;
-        setSpriteFromAge(sprites);
-        if (flash) {
-            quadSize = 0.125F * (1.0F - 0.5F * age / lifetime);
+        if (!isAlive()) {
+            SPARKS.remove(this);
             return;
         }
+        setSpriteFromAge(sprites);
+        SPARKS.add(this);
         if (onGround) {
             if (falling < -0.01D && bounces++ == 0) {
-                yd = -falling * 0.8D;
+                yd = -falling * (flash ? 0.6D : 0.8D);
                 xd *= 0.7D; zd *= 0.7D;
             }
-            if (++groundedTicks >= 3 || bounces > 1) {
+            if (++groundedTicks >= (flash ? 2 : 3) || bounces > 1) {
                 remove();
+                SPARKS.remove(this);
                 return;
             }
         } else groundedTicks = 0;
+        if (flash) {
+            quadSize = 0.125F * (1.0F - 0.5F * age / lifetime);
+            if (age >= lifetime - 3) alpha = Math.max(0.0F, (lifetime - age) / 3.0F);
+            return;
+        }
         if (age >= lifetime - 4) alpha = Math.max(0.0F, (lifetime - age) / 4.0F);
     }
 
-    @Override public void renderRotatedQuad(VertexConsumer vertices, Camera camera, Quaternionf rotation, float partialTick) {
-        if (flash) {
-            super.renderRotatedQuad(vertices, camera, rotation, partialTick);
-            return;
-        }
+    private void renderFlash(VertexConsumer vertices, Camera camera, float partialTick) {
+        Vector3f center = relative(camera, Mth.lerp(partialTick, xo, x), Mth.lerp(partialTick, yo, y), Mth.lerp(partialTick, zo, z));
+        float size = getQuadSize(partialTick);
+        vertex(vertices, new Vector3f(-1, -1, 0).rotate(camera.rotation()).mul(size).add(center), getU1(), getV1(), getLightColor(partialTick));
+        vertex(vertices, new Vector3f(-1, 1, 0).rotate(camera.rotation()).mul(size).add(center), getU1(), getV0(), getLightColor(partialTick));
+        vertex(vertices, new Vector3f(1, 1, 0).rotate(camera.rotation()).mul(size).add(center), getU0(), getV0(), getLightColor(partialTick));
+        vertex(vertices, new Vector3f(1, -1, 0).rotate(camera.rotation()).mul(size).add(center), getU0(), getV1(), getLightColor(partialTick));
+    }
+
+    private void renderStreak(VertexConsumer vertices, Camera camera, float partialTick) {
         // The source FlyingSpark uses a VERTICAL_CROSS: four crossed faces,
         // with the long dimension stretched along the last two positions.
         Vector3f current = relative(camera, Mth.lerp(partialTick, xo, x), Mth.lerp(partialTick, yo, y), Mth.lerp(partialTick, zo, z));
@@ -100,10 +125,10 @@ public final class GuardSparkParticle extends TextureSheetParticle {
         Vector3f direction = new Vector3f(current).sub(previous);
         float distance = direction.length();
         if (distance < 0.001F) {
-            super.renderRotatedQuad(vertices, camera, rotation, partialTick);
-            return;
+            direction.set(0, 1, 0);
+        } else {
+            direction.normalize();
         }
-        direction.normalize();
         Vector3f center = new Vector3f(current).add(previous).mul(0.5F);
         float halfLength = quadSize * Math.max(1.0F, distance * 40.0F) * 0.5F;
         Vector3f head = new Vector3f(center).add(new Vector3f(direction).mul(halfLength));
@@ -135,7 +160,8 @@ public final class GuardSparkParticle extends TextureSheetParticle {
 
     private void vertex(VertexConsumer vertices, Vector3f point, float u, float v, int light) {
         vertices.addVertex(point.x, point.y, point.z)
-            .setUv(u, v).setColor(rCol, gCol, bCol, alpha).setLight(light);
+            .setColor(rCol, gCol, bCol, alpha).setUv(u, v)
+            .setOverlay(OverlayTexture.NO_OVERLAY).setLight(light).setNormal(0, 1, 0);
     }
 
     @Override public int getLightColor(float partialTick) {
@@ -146,7 +172,26 @@ public final class GuardSparkParticle extends TextureSheetParticle {
     }
 
     @Override public ParticleRenderType getRenderType() {
-        return ParticleRenderType.PARTICLE_SHEET_OPAQUE;
+        return ParticleRenderType.NO_RENDER;
+    }
+
+    @SubscribeEvent
+    public static void renderSparks(RenderLevelStageEvent event) {
+        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES || SPARKS.isEmpty()) return;
+        ClientLevel currentLevel = Minecraft.getInstance().level;
+        SPARKS.removeIf(spark -> !spark.isAlive() || spark.level != currentLevel);
+        if (SPARKS.isEmpty()) return;
+
+        // The streak vertices are camera-relative. Rendering them through an
+        // entity buffer bypasses Sodium's specialized particle vertex format.
+        MultiBufferSource.BufferSource buffers = Minecraft.getInstance().renderBuffers().bufferSource();
+        VertexConsumer vertices = buffers.getBuffer(SPARK_RENDER_TYPE);
+        float partialTick = event.getPartialTick().getGameTimeDeltaPartialTick(false);
+        for (GuardSparkParticle spark : SPARKS) {
+            if (spark.flash) spark.renderFlash(vertices, event.getCamera(), partialTick);
+            else spark.renderStreak(vertices, event.getCamera(), partialTick);
+        }
+        buffers.endBatch(SPARK_RENDER_TYPE);
     }
 
     @SubscribeEvent

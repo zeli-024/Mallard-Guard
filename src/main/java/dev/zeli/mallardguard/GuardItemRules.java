@@ -6,9 +6,29 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.UseAnim;
+import net.minecraft.world.entity.player.Player;
 
 public final class GuardItemRules {
     private GuardItemRules() {}
+
+    public static boolean shieldLike(ItemStack stack) {
+        return !stack.isEmpty() && (stack.is(Items.SHIELD) || stack.getUseAnimation() == UseAnim.BLOCK
+            || stack.is(TagKey.create(Registries.ITEM, ResourceLocation.fromNamespaceAndPath("c", "tools/shields")))
+            || stack.is(TagKey.create(Registries.ITEM, ResourceLocation.fromNamespaceAndPath("forge", "shields")))
+            || matches(stack, GuardConfig.SHIELD_ITEMS.get()));
+    }
+
+    public static boolean consumableInEitherHand(Player player) {
+        return consumable(player.getMainHandItem()) || consumable(player.getOffhandItem());
+    }
+
+    public static boolean consumable(ItemStack stack) {
+        UseAnim animation = stack.getUseAnimation();
+        return !stack.isEmpty() && (animation == UseAnim.EAT || animation == UseAnim.DRINK
+            || stack.is(Items.POTION) || stack.is(Items.SPLASH_POTION) || stack.is(Items.LINGERING_POTION));
+    }
 
     public static boolean matches(ItemStack stack, String rules) {
         if (rules.isBlank()) return false;

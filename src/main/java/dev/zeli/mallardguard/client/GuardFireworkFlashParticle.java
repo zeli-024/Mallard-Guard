@@ -1,5 +1,6 @@
 package dev.zeli.mallardguard.client;
 
+import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.GuardParticles;
 import dev.zeli.mallardguard.MallardGuard;
 import net.minecraft.client.Camera;
@@ -20,12 +21,14 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 @EventBusSubscriber(modid = MallardGuard.ID, value = Dist.CLIENT)
 public final class GuardFireworkFlashParticle extends TextureSheetParticle {
     private final float size;
+    private final float peakAlpha;
 
     private GuardFireworkFlashParticle(ClientLevel level, double x, double y, double z, SpriteSet sprites, boolean perfect) {
         super(level, x, y, z);
         lifetime = 4;
         hasPhysics = false;
-        size = perfect ? 0.40F : 0.25F;
+        size = (perfect ? GuardConfig.PERFECT_ORB_SIZE.get() : GuardConfig.REGULAR_ORB_SIZE.get()) / 100.0F;
+        peakAlpha = (perfect ? GuardConfig.PERFECT_ORB_OPACITY.get() : GuardConfig.REGULAR_ORB_OPACITY.get()) / 100.0F;
         pickSprite(sprites);
     }
 
@@ -45,7 +48,7 @@ public final class GuardFireworkFlashParticle extends TextureSheetParticle {
 
     @Override public void render(VertexConsumer vertices, Camera camera, float partialTick) {
         float progress = Mth.clamp((age + partialTick) / lifetime, 0.0F, 1.0F);
-        setAlpha(0.70F - 0.30F * progress);
+        setAlpha(peakAlpha * (1.0F - (3.0F / 7.0F) * progress));
         super.render(vertices, camera, partialTick);
     }
 
