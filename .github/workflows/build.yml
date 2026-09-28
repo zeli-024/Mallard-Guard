@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -19,8 +21,21 @@ jobs:
         with:
           name: mallard-guard
           path: build/libs/*.jar
-      - name: Upload to CurseForge
+      - name: Check version for publishing
+        id: publish
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            echo 'upload=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          previous="$(git show "${{ github.event.before }}:gradle.properties" 2>/dev/null | sed -n 's/^mod_version=//p' || true)"
+          current="$(sed -n 's/^mod_version=//p' gradle.properties)"
+          if [ "$previous" != "$current" ]; then
+            echo 'upload=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload to CurseForge
+        if: steps.publish.outputs.upload == 'true'
         env:
           CF_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
         run: |
@@ -37,7 +52,12 @@ jobs:
             *-*)     echo "Unknown release type in mod_version=$mod_version" >&2; exit 1 ;;
             *)        release_type=release ;;
           esac
-          changelog="$(git log -1 --pretty=%B)"
+          notes_file="release-notes/${mod_version}.md"
+          if [ ! -f "$notes_file" ]; then
+            echo "Missing CurseForge changelog: $notes_file" >&2
+            exit 1
+          fi
+          changelog="$(cat "$notes_file")"
           metadata="$(CHANGELOG="$changelog" RELEASE_TYPE="$release_type" python3 -c 'import json, os; print(json.dumps({"changelog": os.environ["CHANGELOG"], "changelogType": "text", "gameVersionNames": ["1.21.1", "NeoForge", "Java 21", "Client", "Server"], "releaseType": os.environ["RELEASE_TYPE"]}))')"
           curl --fail-with-body --silent --show-error \
             -H "X-Api-Token: $CF_API_TOKEN" \
