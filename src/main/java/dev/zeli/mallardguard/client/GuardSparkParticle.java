@@ -2,6 +2,7 @@ package dev.zeli.mallardguard.client;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.zeli.mallardguard.GuardParticles;
+import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.MallardGuard;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -51,7 +52,7 @@ public final class GuardSparkParticle extends TextureSheetParticle {
         if (flash) {
             // Stars travel and bounce like streak sparks, while keeping their sprite shape.
             this.hasPhysics = true;
-            this.lifetime = 11 + random.nextInt(5);
+            this.lifetime = Math.max(1, (11 + random.nextInt(5)) * GuardConfig.SPARK_LIFETIME.get() / 100);
             this.gravity = 0.72F;
             this.quadSize = 0.125F;
             this.friction = 0.98F;
@@ -69,7 +70,7 @@ public final class GuardSparkParticle extends TextureSheetParticle {
             this.crossX = 0.4F + random.nextFloat() * 0.7F;
             this.crossZ = 0.4F + random.nextFloat() * 0.7F;
             // Shorter than PI's 20–60 ticks at the user's request.
-            this.lifetime = 14 + random.nextInt(9);
+            this.lifetime = Math.max(1, (14 + random.nextInt(9)) * GuardConfig.SPARK_LIFETIME.get() / 100);
             setSize(quadSize, quadSize);
         }
         setSpriteFromAge(sprites);
@@ -130,7 +131,7 @@ public final class GuardSparkParticle extends TextureSheetParticle {
             direction.normalize();
         }
         Vector3f center = new Vector3f(current).add(previous).mul(0.5F);
-        float halfLength = quadSize * Math.max(1.0F, distance * 40.0F) * 0.5F;
+        float halfLength = quadSize * Math.max(1.0F, distance * 40.0F) * 0.5F * GuardConfig.SPARK_LENGTH.get() / 100.0F;
         Vector3f head = new Vector3f(center).add(new Vector3f(direction).mul(halfLength));
         Vector3f tail = new Vector3f(center).sub(new Vector3f(direction).mul(halfLength));
         Vector3f sideA = new Vector3f(direction).cross(new Vector3f(0, 0, 1));

@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import dev.zeli.mallardguard.MallardGuard;
 import dev.zeli.mallardguard.GuardItemRules;
+import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.mixin.client.ItemInHandRendererAccessor;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.HumanoidModel;
@@ -28,7 +29,7 @@ public final class GuardAnimationHandler {
     public static void renderFirstPerson(RenderHandEvent event) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
-        if (player == null || event.getHand() != GuardClient.guardHand(player)) return;
+        if (player == null || !GuardConfig.FIRST_PERSON_ANIMATION.get() || event.getHand() != GuardClient.guardHand(player)) return;
         ItemStack stack = event.getItemStack();
         // Let shield-like items keep their own first-person animation in every phase.
         if (stack.isEmpty() || GuardItemRules.shieldLike(stack) || !GuardClient.isCurrentGuardHand(stack)) return;

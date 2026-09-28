@@ -32,14 +32,24 @@ public final class GuardState {
     private boolean held;
     private int elapsed;
     private int recharge;
+    private int rechargeDuration;
     private int phase;
     private ItemStack heldItem = ItemStack.EMPTY;
     private InteractionHand guardHand = InteractionHand.MAIN_HAND;
     private long safetyThroughTick = -1;
+    private int blocksTaken;
+    private boolean breakPending;
+    private boolean guardReleaseRequired;
+    private static boolean clientCooldownPreventsGuard = true;
 
     public enum Result { NONE, PERFECT, PARRY, BLOCK }
 
     private GuardState() {}
+
+    public static void forget(ServerPlayer player) {
+        updateMovement(player, false);
+        STATES.remove(player.getUUID());
+    }
 
     public static boolean eligible(Player player) {
         return eligible(player, InteractionHand.MAIN_HAND) || eligible(player, InteractionHand.OFF_HAND);
@@ -47,8 +57,10 @@ public final class GuardState {
 
     public static boolean eligible(Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
-        if (stack.isEmpty()) return false;
-        if (GuardItemRules.matches(stack, GuardConfig.EXCLUDED_ITEMS.get())) return false;
+        if (!stack.isEmpty() && (player.level().isClientSide ? clientCooldownPreventsGuard : GuardConfig.COOLDOWN_PREVENTS_GUARD.get())
+            && player.getCooldowns().isOnCooldown(stack.getItem())) return false;
+        if (stack.isEmpty()) return GuardConfig.ALLOW_ANY_ITEM.get();
+        if (GuardConfig.ALLOW_ANY_ITEM.get()) return !GuardItemRules.matches(stack, GuardConfig.EXCLUDED_ITEMS.get());
         if (GuardItemRules.shieldLike(stack)) return true;
         if (GuardItemRules.matches(stack, GuardConfig.INCLUDED_ITEMS.get())) return true;
         if (!GuardConfig.ALLOW_USABLE_ITEMS.get() && stack.getUseAnimation() != UseAnim.NONE) return false;
@@ -63,10 +75,17 @@ public final class GuardState {
         return false;
     }
 
+    public static void setClientCooldownPreventsGuard(boolean enabled) {
+        clientCooldownPreventsGuard = enabled;
+    }
+
     public static void input(ServerPlayer player, boolean down, boolean requestedOffhand) {
         GuardState state = STATES.computeIfAbsent(player.getUUID(), ignored -> new GuardState());
-        if (down && GuardItemRules.consumableInEitherHand(player)) down = false;
+        if (down && GuardConfig.CONSUMABLE_PRIORITY.get() && GuardItemRules.consumableInEitherHand(player)) down = false;
         if (!down) {
+            // Releasing guard in the same tick as the final block must not skip the break penalty.
+            if (state.breakPending) applyGuardBreak(player, state);
+            state.guardReleaseRequired = false;
             if (state.phase == 4 && player.isUsingItem() && player.getUsedItemHand() == state.guardHand)
                 player.stopUsingItem();
             state.held = false;
@@ -75,22 +94,26 @@ public final class GuardState {
             sync(player, state);
             return;
         }
-        if (state.held || state.recharge > 0 || (!GuardConfig.PARRY.get() && !GuardConfig.BLOCK.get())) return;
+        if (state.held || state.guardReleaseRequired || state.recharge > 0 || (!GuardConfig.PARRY.get() && !GuardConfig.BLOCK.get())) return;
         InteractionHand requested = requestedOffhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
         InteractionHand hand = eligible(player, requested) ? requested :
             eligible(player, requested == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND)
                 ? (requested == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND) : null;
         if (hand == null) return;
+        if (GuardItemRules.shieldLike(player.getItemInHand(hand))
+            && player.getCooldowns().isOnCooldown(player.getItemInHand(hand).getItem())) return;
         state.held = true;
         state.elapsed = 0;
         state.guardHand = hand;
         state.heldItem = player.getItemInHand(hand);
-        state.phase = GuardConfig.PARRY.get() ? (GuardConfig.PERFECT_TICKS.get() > 0 ? 1 : 2)
-            : GuardItemRules.shieldLike(state.heldItem) ? 4 : 3;
-        if (GuardItemRules.shieldLike(state.heldItem) && player.isUsingItem() && player.getUsedItemHand() == hand)
-            player.stopUsingItem();
-        if (state.phase == 4) player.startUsingItem(hand);
-        state.recharge = GuardConfig.RECHARGE_TICKS.get();
+        boolean shield = GuardItemRules.shieldLike(state.heldItem);
+        state.blocksTaken = 0;
+        state.breakPending = false;
+        state.phase = GuardConfig.PARRY.get() ? ((shield ? GuardConfig.SHIELD_PERFECT_TICKS : GuardConfig.PERFECT_TICKS).get() > 0 ? 1 : 2)
+            : shield ? 4 : 3;
+        if (shield && (!player.isUsingItem() || player.getUsedItemHand() != hand)) player.startUsingItem(hand);
+        state.recharge = (shield ? GuardConfig.SHIELD_RECHARGE_TICKS : GuardConfig.RECHARGE_TICKS).get();
+        state.rechargeDuration = state.recharge;
         updateMovement(player, true);
         sync(player, state);
     }
@@ -101,23 +124,27 @@ public final class GuardState {
         if (state == null) return;
         if (state.recharge > 0 && state.phase != 3 && state.phase != 4) state.recharge--;
         if (state.held) {
-            if (GuardItemRules.consumableInEitherHand(player) || !eligible(player, state.guardHand)
-                || state.heldItem != player.getItemInHand(state.guardHand)) {
-                if (state.phase == 4 && player.isUsingItem() && player.getUsedItemHand() == state.guardHand)
+            if (state.breakPending) applyGuardBreak(player, state);
+            ItemStack currentItem = player.getItemInHand(state.guardHand);
+            if (GuardConfig.CONSUMABLE_PRIORITY.get() && GuardItemRules.consumableInEitherHand(player) || !eligible(player, state.guardHand)
+                || GuardItemRules.shieldLike(state.heldItem) && player.getCooldowns().isOnCooldown(currentItem.getItem())
+                || (!(state.heldItem.isEmpty() && currentItem.isEmpty()) && state.heldItem != currentItem)) {
+                if (GuardItemRules.shieldLike(state.heldItem) && player.isUsingItem() && player.getUsedItemHand() == state.guardHand)
                     player.stopUsingItem();
                 state.held = false;
                 state.phase = 0;
             } else if (state.phase == 1 || state.phase == 2) {
                 state.elapsed++;
-                if (state.elapsed >= GuardConfig.PARRY_TICKS.get()) {
+                boolean shield = GuardItemRules.shieldLike(state.heldItem);
+                if (state.elapsed >= (shield ? GuardConfig.SHIELD_PARRY_TICKS : GuardConfig.PARRY_TICKS).get()) {
                     state.phase = GuardItemRules.shieldLike(state.heldItem) ? 4 : GuardConfig.BLOCK.get() ? 3 : 0;
                     if (state.phase == 4) {
-                        // After the timed parry, allow the item to do its own shield blocking.
-                        player.startUsingItem(state.guardHand);
-                        state.recharge = GuardConfig.RECHARGE_TICKS.get();
-                    } else if (state.phase == 3) state.recharge = GuardConfig.RECHARGE_TICKS.get();
+                        // Keep the existing use action so the shield pose never restarts.
+                        state.recharge = GuardConfig.SHIELD_RECHARGE_TICKS.get();
+                        state.rechargeDuration = state.recharge;
+                    } else if (state.phase == 3) { state.recharge = GuardConfig.RECHARGE_TICKS.get(); state.rechargeDuration = state.recharge; }
                     else state.held = false;
-                } else if (state.elapsed >= GuardConfig.PERFECT_TICKS.get()) {
+                } else if (state.elapsed >= (shield ? GuardConfig.SHIELD_PERFECT_TICKS : GuardConfig.PERFECT_TICKS).get()) {
                     state.phase = 2;
                 }
             }
@@ -128,6 +155,23 @@ public final class GuardState {
         }
         updateMovement(player, state.held && state.phase != 0);
         sync(player, state);
+    }
+
+    private static void applyGuardBreak(ServerPlayer player, GuardState state) {
+        state.breakPending = false;
+        state.guardReleaseRequired = true;
+        boolean shieldBreak = GuardItemRules.shieldLike(state.heldItem);
+        if (!shieldBreak || !player.getCooldowns().isOnCooldown(state.heldItem.getItem())) {
+            state.recharge = Math.max(GuardConfig.RECHARGE_TICKS.get(), GuardConfig.SHIELD_BREAK_TICKS.get());
+            state.rechargeDuration = state.recharge;
+        }
+        if (shieldBreak) {
+            if (player.isUsingItem() && player.getUsedItemHand() == state.guardHand) player.stopUsingItem();
+            // A broken shield cannot immediately resume its vanilla use action.
+            player.getCooldowns().addCooldown(state.heldItem.getItem(), state.recharge);
+        }
+        state.phase = 0;
+        state.held = false;
     }
 
     public static void updateMovement(Player player, boolean guarding) {
@@ -143,32 +187,28 @@ public final class GuardState {
     }
 
     public static Result handleHit(ServerPlayer player, DamageSource source) {
-        // The optional exclusion only affects parries; normal blocking still follows its own rules.
-        if (!GuardConfig.PARRY_DROWNING_FIRE.get()
-            && (source.is(DamageTypes.DROWN) || source.is(DamageTypeTags.IS_FIRE))) {
-            GuardState state = STATES.get(player.getUUID());
-            if (state == null || state.phase != 3) return Result.NONE;
-        }
+        boolean parryAllowed = GuardDamageRules.canParry(source);
         if (source.is(DamageTypes.FALL) || source.is(DamageTypes.FLY_INTO_WALL)) {
             // Ground impacts require deliberate downward aim. Keep the existing
             // flying-into-wall behavior separate from fall damage.
-            if (source.is(DamageTypes.FALL) && player.getLookAngle().y > -Math.sin(Math.toRadians(40.0D)))
+            if (source.is(DamageTypes.FALL) && GuardConfig.FALL_LOOK_DOWN.get()
+                && player.getLookAngle().y > -Math.sin(Math.toRadians(40.0D)))
                 return Result.NONE;
-            return GuardConfig.FALL_PARRY.get() ? handleHit(player, SourceKind.FALL, null) : Result.NONE;
+            return handleHit(player, SourceKind.FALL, null, parryAllowed);
         }
         if (source.is(DamageTypeTags.IS_EXPLOSION)) {
             Vec3 position = source.getSourcePosition();
-            return handleHit(player, SourceKind.EXPLOSION, position);
+            return handleHit(player, SourceKind.EXPLOSION, position, parryAllowed);
         }
         if (source.is(DamageTypeTags.IS_PROJECTILE) || source.getDirectEntity() instanceof Projectile) {
             // Entity projectiles parry at ProjectileImpactEvent, before their collision can consume them.
             // Damage-only projectiles can be parried but have no entity to redirect.
-            return handleHit(player, SourceKind.PROJECTILE_DAMAGE, source.getSourcePosition());
+            return handleHit(player, SourceKind.PROJECTILE_DAMAGE, source.getSourcePosition(), parryAllowed);
         }
         if (source.getEntity() instanceof LivingEntity attacker && source.getDirectEntity() == attacker
             && player.distanceTo(attacker) <= 4.0D)
-            return handleHit(player, SourceKind.MELEE, attacker.position());
-        return handleHit(player, SourceKind.OTHER, source.getSourcePosition());
+            return handleHit(player, SourceKind.MELEE, attacker.position(), parryAllowed);
+        return handleHit(player, SourceKind.OTHER, source.getSourcePosition(), parryAllowed);
     }
 
     public static Result handleProjectile(ServerPlayer player, Projectile projectile) {
@@ -177,30 +217,39 @@ public final class GuardState {
         if (state != null && state.phase == 3) {
             if (GuardConfig.BLOCK_DEFLECT_CHANCE.get() == 0 ||
                 player.getRandom().nextInt(100) >= GuardConfig.BLOCK_DEFLECT_CHANCE.get()) return Result.NONE;
-        } else if (!GuardConfig.PARRY_PROJECTILES.get()) return Result.NONE;
-        return handleHit(player, SourceKind.PROJECTILE_IMPACT, projectile.position());
+        } else if (!GuardConfig.PARRY_PROJECTILES.get() || !GuardDamageRules.canParryProjectile(projectile)) return Result.NONE;
+        return handleHit(player, SourceKind.PROJECTILE_IMPACT, projectile.position(), true);
     }
 
     private enum SourceKind { MELEE, FALL, EXPLOSION, PROJECTILE_IMPACT, PROJECTILE_DAMAGE, OTHER }
 
-    private static Result handleHit(ServerPlayer player, SourceKind kind, Vec3 origin) {
+    private static Result handleHit(ServerPlayer player, SourceKind kind, Vec3 origin, boolean parryAllowed) {
         GuardState state = STATES.get(player.getUUID());
         if (state == null || !eligible(player, state.guardHand) || (kind != SourceKind.FALL && !inAngle(player, origin))) return Result.NONE;
+        if (state.breakPending && !GuardItemRules.shieldLike(state.heldItem)) return Result.NONE;
         // A successful parry closes the stance immediately; safety is a separate deadline.
         if (state.phase == 0 && player.level().getGameTime() <= state.safetyThroughTick) {
-            return canParry(kind, Result.PARRY) ? Result.PARRY : Result.NONE;
+            return parryAllowed && canParry(kind, Result.PARRY) ? Result.PARRY : Result.NONE;
         }
         if (state.phase == 0 || state.phase == 4) return Result.NONE;
         Result result = state.phase == 1 ? Result.PERFECT : state.phase == 2 ? Result.PARRY : Result.BLOCK;
-        if (result == Result.BLOCK && !canBlock(kind) || result != Result.BLOCK && !canParry(kind, result)) return Result.NONE;
+        if (kind == SourceKind.FALL && result == Result.PERFECT && !GuardConfig.FALL_PERFECT_PARRY.get()) result = Result.PARRY;
+        if (result == Result.BLOCK && !canBlock(kind) || result != Result.BLOCK && (!parryAllowed || !canParry(kind, result))) return Result.NONE;
+        if (result == Result.BLOCK && !GuardItemRules.shieldLike(state.heldItem)) {
+            int max = GuardConfig.TOOL_MAX_BLOCKS.get();
+            if (max > 0 && ++state.blocksTaken >= max) state.breakPending = true;
+        }
         if (result == Result.PERFECT) state.recharge = 0;
-        else if (result == Result.PARRY) state.recharge = Math.max(0, GuardConfig.RECHARGE_TICKS.get() / 2);
+        else if (result == Result.PARRY) state.recharge = Math.max(0,
+            (GuardItemRules.shieldLike(state.heldItem) ? GuardConfig.SHIELD_RECHARGE_TICKS : GuardConfig.RECHARGE_TICKS).get() / 2);
         if (result == Result.PERFECT || result == Result.PARRY) {
             state.safetyThroughTick = GuardConfig.FOLLOW_UP_TICKS.get() == 0 ? -1 : player.level().getGameTime() + GuardConfig.FOLLOW_UP_TICKS.get();
-            state.held = false;
-            state.phase = 0;
+            boolean shield = GuardItemRules.shieldLike(state.heldItem);
+            if (shield) state.safetyThroughTick = -1;
+            state.held = shield;
+            state.phase = shield ? 4 : 0;
             state.elapsed = 0;
-            updateMovement(player, false);
+            updateMovement(player, shield);
         }
         sync(player, state);
         return result;
@@ -212,14 +261,31 @@ public final class GuardState {
             && player.getUsedItemHand() == state.guardHand && GuardItemRules.shieldLike(player.getUseItem());
     }
 
-    public static void postponeShieldUse(PlayerInteractEvent.RightClickItem event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+    public static boolean shieldGuard(ServerPlayer player) {
         GuardState state = STATES.get(player.getUUID());
-        if (state != null && state.held && (state.phase == 1 || state.phase == 2)
-            && event.getHand() == state.guardHand && GuardItemRules.shieldLike(state.heldItem)) {
-            event.setCanceled(true);
-            event.setCancellationResult(InteractionResult.SUCCESS);
-        }
+        return state != null && state.held && GuardItemRules.shieldLike(state.heldItem);
+    }
+
+    public static void shieldBlocked(ServerPlayer player) {
+        GuardState state = STATES.get(player.getUUID());
+        if (state == null || state.phase != 4) return;
+        int max = GuardConfig.SHIELD_MAX_BLOCKS.get();
+        if (max > 0 && ++state.blocksTaken >= max) state.breakPending = true;
+    }
+
+    public static boolean guardBreakPending(ServerPlayer player) {
+        GuardState state = STATES.get(player.getUUID());
+        return state != null && state.breakPending;
+    }
+
+    public static void preventVanillaShieldUse(PlayerInteractEvent.RightClickItem event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)
+            || !GuardItemRules.shieldLike(player.getItemInHand(event.getHand()))
+            || GuardConfig.CONSUMABLE_PRIORITY.get() && GuardItemRules.consumableInEitherHand(player)) return;
+        event.setCanceled(true);
+        // A successful cancelled use swings the arm, even on a broken shield.
+        // Our guard packet starts shield use directly when it is eligible.
+        event.setCancellationResult(InteractionResult.FAIL);
     }
 
     public static void wear(ServerPlayer player, Result result) {
@@ -233,30 +299,17 @@ public final class GuardState {
         GuardState state = STATES.get(player.getUUID());
         InteractionHand hand = state == null ? InteractionHand.MAIN_HAND : state.guardHand;
         ItemStack stack = player.getItemInHand(hand);
-        if (!stack.isDamageableItem() && !stack.has(DataComponents.UNBREAKABLE) && GuardConfig.ADDED_DURABILITY.get() > 0) {
-            if (stack.getCount() > 1) {
-                ItemStack remainder = stack.copy();
-                remainder.setCount(stack.getCount() - 1);
-                stack.setCount(1);
-                if (!player.getInventory().add(remainder) && !remainder.isEmpty()) player.drop(remainder, false);
-            }
-            stack.set(DataComponents.MAX_STACK_SIZE, 1);
-            stack.set(DataComponents.MAX_DAMAGE, GuardConfig.ADDED_DURABILITY.get());
-            stack.set(DataComponents.DAMAGE, 0);
-        }
         if (!stack.isDamageableItem()) return;
-        // Scale each hit to maximum durability, including the durability given to non-damageable items.
+        // Only items with their own durability lose wear. Empty hands and stackable items are unaffected.
         int wear = Math.max(1, (int) Math.ceil(stack.getMaxDamage() * (base / 1000.0D)));
         stack.hurtAndBreak(wear, player, hand == InteractionHand.MAIN_HAND ? EquipmentSlot.MAINHAND : EquipmentSlot.OFFHAND);
     }
 
     private static boolean canParry(SourceKind kind, Result result) {
         return switch (kind) {
-            case MELEE, OTHER -> true;
-            case FALL -> GuardConfig.FALL_PARRY.get();
+            case MELEE, OTHER, FALL -> true;
             case EXPLOSION -> GuardConfig.PARRY_EXPLOSIONS.get() && (!GuardConfig.PERFECT_EXPLOSIONS_ONLY.get() || result == Result.PERFECT);
-            case PROJECTILE_IMPACT -> GuardConfig.PARRY_PROJECTILES.get();
-            case PROJECTILE_DAMAGE -> GuardConfig.PARRY_PROJECTILES.get();
+            case PROJECTILE_IMPACT, PROJECTILE_DAMAGE -> GuardConfig.PARRY_PROJECTILES.get();
         };
     }
 
@@ -281,7 +334,9 @@ public final class GuardState {
     }
 
     private static void sync(ServerPlayer player, GuardState state) {
+        boolean shield = GuardItemRules.shieldLike(state.heldItem);
         PacketDistributor.sendToPlayer(player, new GuardPackets.Status(state.phase, state.elapsed, state.recharge,
-            GuardConfig.PARRY_TICKS.get(), GuardConfig.RECHARGE_TICKS.get(), state.guardHand == InteractionHand.OFF_HAND));
+            shield ? GuardConfig.SHIELD_PARRY_TICKS.get() : GuardConfig.PARRY_TICKS.get(),
+            Math.max(1, state.rechargeDuration), state.guardHand == InteractionHand.OFF_HAND));
     }
 }

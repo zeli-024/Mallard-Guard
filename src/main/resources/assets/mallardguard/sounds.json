@@ -1,13 +1,242 @@
 {
-  "parry_1": { "sounds": ["mallardguard:parry_1"] },
-  "parry_2": { "sounds": ["mallardguard:parry_2"] },
-  "parry_3": { "sounds": ["mallardguard:parry_3"] },
-  "parry_4": { "sounds": ["mallardguard:parry_4"] },
-  "parry_5": { "sounds": ["mallardguard:parry_5"] },
-  "parry_6": { "sounds": ["mallardguard:parry_6"] },
-  "block_1": { "sounds": ["mallardguard:block_1"] },
-  "block_2": { "sounds": ["mallardguard:block_2"] },
-  "block_3": { "sounds": ["mallardguard:block_3"] },
-  "block_4": { "sounds": ["mallardguard:block_4"] },
-  "block_5": { "sounds": ["mallardguard:block_5"] }
+  "parry_1": {
+    "sounds": [
+      "mallardguard:parry_1"
+    ]
+  },
+  "parry_2": {
+    "sounds": [
+      "mallardguard:parry_2"
+    ]
+  },
+  "parry_3": {
+    "sounds": [
+      "mallardguard:parry_3"
+    ]
+  },
+  "parry_4": {
+    "sounds": [
+      "mallardguard:parry_4"
+    ]
+  },
+  "parry_5": {
+    "sounds": [
+      "mallardguard:parry_5"
+    ]
+  },
+  "parry_6": {
+    "sounds": [
+      "mallardguard:parry_6"
+    ]
+  },
+  "block_1": {
+    "sounds": [
+      "mallardguard:block_1"
+    ]
+  },
+  "block_2": {
+    "sounds": [
+      "mallardguard:block_2"
+    ]
+  },
+  "block_3": {
+    "sounds": [
+      "mallardguard:block_3"
+    ]
+  },
+  "block_4": {
+    "sounds": [
+      "mallardguard:block_4"
+    ]
+  },
+  "block_5": {
+    "sounds": [
+      "mallardguard:block_5"
+    ]
+  },
+  "block_1_boost": {
+    "sounds": [
+      "mallardguard:block_1_boost"
+    ]
+  },
+  "block_2_boost": {
+    "sounds": [
+      "mallardguard:block_2_boost"
+    ]
+  },
+  "block_3_boost": {
+    "sounds": [
+      "mallardguard:block_3_boost"
+    ]
+  },
+  "block_4_boost": {
+    "sounds": [
+      "mallardguard:block_4_boost"
+    ]
+  },
+  "block_5_boost": {
+    "sounds": [
+      "mallardguard:block_5_boost"
+    ]
+  },
+  "meme_flash": {
+    "sounds": [
+      "mallardguard:meme_flash"
+    ]
+  },
+  "meme_flash_boost": {
+    "sounds": [
+      "mallardguard:meme_flash_boost"
+    ]
+  },
+  "parry_1_boost": {
+    "sounds": [
+      "mallardguard:parry_1_boost"
+    ]
+  },
+  "parry_2_boost": {
+    "sounds": [
+      "mallardguard:parry_2_boost"
+    ]
+  },
+  "parry_3_boost": {
+    "sounds": [
+      "mallardguard:parry_3_boost"
+    ]
+  },
+  "parry_4_boost": {
+    "sounds": [
+      "mallardguard:parry_4_boost"
+    ]
+  },
+  "parry_5_boost": {
+    "sounds": [
+      "mallardguard:parry_5_boost"
+    ]
+  },
+  "parry_6_boost": {
+    "sounds": [
+      "mallardguard:parry_6_boost"
+    ]
+  },
+  "perfect_tool_1": {
+    "sounds": [
+      "mallardguard:perfect_tool_1"
+    ]
+  },
+  "perfect_tool_1_boost": {
+    "sounds": [
+      "mallardguard:perfect_tool_1_boost"
+    ]
+  },
+  "perfect_tool_2": {
+    "sounds": [
+      "mallardguard:perfect_tool_2"
+    ]
+  },
+  "perfect_tool_2_boost": {
+    "sounds": [
+      "mallardguard:perfect_tool_2_boost"
+    ]
+  },
+  "perfect_tool_3": {
+    "sounds": [
+      "mallardguard:perfect_tool_3"
+    ]
+  },
+  "perfect_tool_3_boost": {
+    "sounds": [
+      "mallardguard:perfect_tool_3_boost"
+    ]
+  },
+  "perfect_tool_4": {
+    "sounds": [
+      "mallardguard:perfect_tool_4"
+    ]
+  },
+  "perfect_tool_4_boost": {
+    "sounds": [
+      "mallardguard:perfect_tool_4_boost"
+    ]
+  },
+  "perfect_tool_5": {
+    "sounds": [
+      "mallardguard:perfect_tool_5"
+    ]
+  },
+  "perfect_tool_5_boost": {
+    "sounds": [
+      "mallardguard:perfect_tool_5_boost"
+    ]
+  },
+  "perfect_tool_6": {
+    "sounds": [
+      "mallardguard:perfect_tool_6"
+    ]
+  },
+  "perfect_tool_6_boost": {
+    "sounds": [
+      "mallardguard:perfect_tool_6_boost"
+    ]
+  },
+  "perfect_shield_1": {
+    "sounds": [
+      "mallardguard:perfect_shield_1"
+    ]
+  },
+  "perfect_shield_1_boost": {
+    "sounds": [
+      "mallardguard:perfect_shield_1_boost"
+    ]
+  },
+  "perfect_shield_2": {
+    "sounds": [
+      "mallardguard:perfect_shield_2"
+    ]
+  },
+  "perfect_shield_2_boost": {
+    "sounds": [
+      "mallardguard:perfect_shield_2_boost"
+    ]
+  },
+  "perfect_shield_3": {
+    "sounds": [
+      "mallardguard:perfect_shield_3"
+    ]
+  },
+  "perfect_shield_3_boost": {
+    "sounds": [
+      "mallardguard:perfect_shield_3_boost"
+    ]
+  },
+  "perfect_shield_4": {
+    "sounds": [
+      "mallardguard:perfect_shield_4"
+    ]
+  },
+  "perfect_shield_4_boost": {
+    "sounds": [
+      "mallardguard:perfect_shield_4_boost"
+    ]
+  },
+  "perfect_shield_5": {
+    "sounds": [
+      "mallardguard:perfect_shield_5"
+    ]
+  },
+  "perfect_shield_5_boost": {
+    "sounds": [
+      "mallardguard:perfect_shield_5_boost"
+    ]
+  },
+  "fall_parry": {
+    "sounds": [
+      "mallardguard:fall_parry"
+    ]
+  },
+  "fall_parry_boost": {
+    "sounds": [
+      "mallardguard:fall_parry_boost"
+    ]
+  }
 }
