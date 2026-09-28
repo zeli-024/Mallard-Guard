@@ -4,6 +4,6 @@
   "compatibilityLevel": "JAVA_21",
   "package": "dev.zeli.mallardguard.mixin",
   "mixins": [],
-  "client": ["client.ItemInHandRendererAccessor"],
+  "client": ["client.ItemInHandRendererAccessor", "client.MinecraftShieldReleaseMixin"],
   "injectors": {"defaultRequire": 1}
 }

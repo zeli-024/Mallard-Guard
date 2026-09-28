@@ -1,5 +1,9 @@
-name: Build
-on: [push, pull_request, workflow_dispatch]
+name: Build and publish
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -15,3 +19,22 @@ jobs:
         with:
           name: mallard-guard
           path: build/libs/*.jar
+      - name: Upload to CurseForge
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          CF_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
+        run: |
+          if [ -z "$CF_API_TOKEN" ]; then
+            echo 'CurseForge upload skipped: CURSEFORGE_API_TOKEN secret is not set.'
+            exit 0
+          fi
+          mod_version="$(sed -n 's/^mod_version=//p' gradle.properties)"
+          jar="build/libs/mallardguard-${mod_version}.jar"
+          test -f "$jar"
+          changelog="$(git log -1 --pretty=%B)"
+          metadata="$(CHANGELOG="$changelog" python3 -c 'import json, os; print(json.dumps({"changelog": os.environ["CHANGELOG"], "changelogType": "text", "gameVersionNames": ["1.21.1", "NeoForge", "Java 21", "Client", "Server"], "releaseType": "release"}))')"
+          curl --fail-with-body --silent --show-error \
+            -H "X-Api-Token: $CF_API_TOKEN" \
+            --form-string "metadata=$metadata" \
+            -F "file=@$jar" \
+            'https://minecraft.curseforge.com/api/projects/1712570/upload-file'

@@ -234,7 +234,7 @@ public final class GuardPackets {
 
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("20");
+        PayloadRegistrar registrar = event.registrar("22");
         registrar.playToServer(Input.TYPE, Input.CODEC, (data, context) -> {
             if (context.player() instanceof ServerPlayer player) GuardState.input(player, data.pressed(), data.offhand());
         });

@@ -28,7 +28,7 @@ public final class GuardClientPreset {
     public static int[] parse(String text) {
         if (text == null || text.length() > 256) return null;
         String[] parts = text.split(",", -1);
-        // 1.16 presets had no spark shape value. Older 26-value drafts ended in an impact-frame value.
+        // 1.16 presets had no spark shape value. Older 26-value presets ended in an impact-frame value.
         if (parts.length != DEFAULTS.length && parts.length != DEFAULTS.length - 1) return null;
         int[] values = DEFAULTS.clone();
         try {

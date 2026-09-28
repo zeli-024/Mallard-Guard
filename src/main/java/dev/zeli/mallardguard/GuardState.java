@@ -86,7 +86,8 @@ public final class GuardState {
             // Releasing guard in the same tick as the final block must not skip the break penalty.
             if (state.breakPending) applyGuardBreak(player, state);
             state.guardReleaseRequired = false;
-            if (state.phase == 4 && player.isUsingItem() && player.getUsedItemHand() == state.guardHand)
+            if (state.held && GuardItemRules.shieldLike(state.heldItem)
+                && player.isUsingItem() && player.getUsedItemHand() == state.guardHand)
                 player.stopUsingItem();
             state.held = false;
             state.phase = 0;
@@ -283,9 +284,9 @@ public final class GuardState {
             || !GuardItemRules.shieldLike(player.getItemInHand(event.getHand()))
             || GuardConfig.CONSUMABLE_PRIORITY.get() && GuardItemRules.consumableInEitherHand(player)) return;
         event.setCanceled(true);
-        // A successful cancelled use swings the arm, even on a broken shield.
-        // Our guard packet starts shield use directly when it is eligible.
-        event.setCancellationResult(InteractionResult.FAIL);
+        // Guard owns shield use. Consume this standalone attempt without a swing,
+        // even while the guard recharge or vanilla shield cooldown is active.
+        event.setCancellationResult(InteractionResult.CONSUME);
     }
 
     public static void wear(ServerPlayer player, Result result) {

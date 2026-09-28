@@ -154,7 +154,7 @@ public final class GuardClient {
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) {
-            if (data.phase() == 0 && phase != 0 && mc.player.isUsingItem()
+            if (data.phase() == 0 && mc.player.isUsingItem()
                 && GuardItemRules.shieldLike(mc.player.getUseItem())) mc.player.stopUsingItem();
             InteractionHand hand = data.offhand() ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
             if (data.phase() != 0 && GUARD_KEY.isDown() && (!mc.player.isUsingItem() || mc.player.getUsedItemHand() != hand)
@@ -502,7 +502,7 @@ public final class GuardClient {
         }
         wasGuardKeyDown = guardKeyDown;
         boolean down = guardKeyDown && !hasConsumable && !waitForGuardRelease;
-        if (!down && phase == 4
+        if (!down && phase != 0
             && mc.player.isUsingItem() && GuardItemRules.shieldLike(mc.player.getUseItem())) mc.player.stopUsingItem();
         GuardState.updateMovement(mc.player, down && (phase != 0 || !wasDown && recharge == 0 && GuardState.eligible(mc.player)));
         if (down != wasDown) {
@@ -513,12 +513,17 @@ public final class GuardClient {
                         && (!GuardState.eligible(mc.player, InteractionHand.MAIN_HAND)
                             || GuardItemRules.shieldLike(mc.player.getOffhandItem())
                                 && mc.player.getMainHandItem().getUseAnimation() == net.minecraft.world.item.UseAnim.NONE));
-            InteractionHand hand = chooseOffhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-            if (down && GuardItemRules.shieldLike(mc.player.getItemInHand(hand))
-                && !mc.player.getCooldowns().isOnCooldown(mc.player.getItemInHand(hand).getItem())
-                && (!mc.player.isUsingItem() || mc.player.getUsedItemHand() != hand)) mc.player.startUsingItem(hand);
+            // A shield starts using only after the server accepts the stance in Status.
+            // Local prediction could raise it while the server is still recharging.
             PacketDistributor.sendToServer(new GuardPackets.Input(down, chooseOffhand));
         }
+    }
+
+    /** A rebound Guard key maintains only the shield use that our active stance owns. */
+    public static boolean maintainGuardShieldUse() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc.screen == null && mc.player != null && GUARD_KEY.isDown() && !waitForGuardRelease
+            && phase != 0 && mc.player.isUsingItem() && GuardItemRules.shieldLike(mc.player.getUseItem());
     }
 
     @SubscribeEvent
@@ -526,7 +531,11 @@ public final class GuardClient {
         Minecraft mc = Minecraft.getInstance();
         if (event.isUseItem() && mc.player != null && event.getHand() != null
             && !(serverConsumablePriority && GuardItemRules.consumableInEitherHand(mc.player))
-            && GuardItemRules.shieldLike(mc.player.getItemInHand(event.getHand()))) event.setCanceled(true);
+            && GuardItemRules.shieldLike(mc.player.getItemInHand(event.getHand()))) {
+            event.setCanceled(true);
+            // NeoForge swings the canceled hand by default unless explicitly disabled.
+            event.setSwingHand(false);
+        }
     }
 
     @SubscribeEvent
@@ -539,6 +548,7 @@ public final class GuardClient {
         // Bypass the main-hand item so eating/drinking in the offhand works even
         // when that item (such as a shield) normally consumes the right click.
         event.setCanceled(true);
+        event.setSwingHand(false);
         mc.gameMode.useItem(mc.player, InteractionHand.OFF_HAND);
     }
 

@@ -25,14 +25,14 @@ tasks.named('processResources', ProcessResources) {
     filesMatching('META-INF/neoforge.mods.toml') { expand values }
 }
 
-// Keep the parent files/ folder in sync after a successful build. An unsuccessful
+// Keep the Linux home jars/ folder in sync after a successful build. An unsuccessful
 // build never replaces or deletes the previous playable jar.
 tasks.named('build') {
     doLast {
         def builtJar = tasks.named('jar', Jar).get().archiveFile.get().asFile
         if (!builtJar.isFile()) throw new GradleException("Mallard Guard jar is missing: ${builtJar}")
 
-        def destination = layout.projectDirectory.dir('../files').asFile
+        def destination = new File(System.getProperty('user.home'), 'jars')
         if (!destination.isDirectory() && !destination.mkdirs())
             throw new GradleException("Cannot create Mallard Guard output folder: ${destination}")
         java.nio.file.Files.copy(builtJar.toPath(), new File(destination, builtJar.name).toPath(),
