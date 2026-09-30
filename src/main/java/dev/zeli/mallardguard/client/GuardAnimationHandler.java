@@ -41,7 +41,7 @@ public final class GuardAnimationHandler {
         pose.pushPose();
         ItemInHandRendererAccessor accessor = (ItemInHandRendererAccessor) renderer;
         accessor.mallardguard$applyItemArmTransform(pose, arm, event.getEquipProgress());
-        accessor.mallardguard$applyItemArmAttackTransform(pose, arm, event.getSwingProgress());
+        accessor.mallardguard$applyItemArmAttackTransform(pose, arm, 0.0F);
         int direction = arm == HumanoidArm.RIGHT ? 1 : -1;
         pose.translate(direction * -0.14142136F, 0.08F, 0.14142136F);
         pose.mulPose(Axis.XP.rotationDegrees(-102.25F));

@@ -238,5 +238,15 @@
     "sounds": [
       "mallardguard:fall_parry_boost"
     ]
+  },
+  "fall_regular": {
+    "sounds": [
+      "mallardguard:fall_regular"
+    ]
+  },
+  "fall_regular_boost": {
+    "sounds": [
+      "mallardguard:fall_regular_boost"
+    ]
   }
 }

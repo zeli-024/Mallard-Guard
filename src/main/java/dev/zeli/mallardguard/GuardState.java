@@ -28,6 +28,35 @@ import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 
 public final class GuardState {
     private static final Map<UUID, GuardState> STATES = new HashMap<>();
+    private static final Map<UUID, Long> ATTACK_LOCKS = new HashMap<>();
+    private static long clientAttackUntil = Long.MIN_VALUE;
+
+    public static boolean attackReady(Player player) {
+        long until = player.level().isClientSide ? clientAttackUntil : ATTACK_LOCKS.getOrDefault(player.getUUID(), Long.MIN_VALUE);
+        return !GuardCombatEffects.stunned(player) && player.level().getGameTime() >= until && player.getAttackStrengthScale(0.0F) >= 1.0F;
+    }
+
+    public static void feinted(ServerPlayer player) {
+        // A windup cancellation may release the input lock, never an actual hit's cooldown.
+        if (net.neoforged.fml.ModList.get().isLoaded("bettercombat") && player.getAttackStrengthScale(0) >= 1.0F)
+            ATTACK_LOCKS.remove(player.getUUID());
+    }
+
+    public static void clearClientAttackLock() { clientAttackUntil = Long.MIN_VALUE; }
+
+    public static void attackStarted(Player player) {
+        long until = player.level().getGameTime() + Math.max(1, (int) Math.ceil(player.getCurrentItemAttackStrengthDelay()));
+        if (player.level().isClientSide) clientAttackUntil = Math.max(clientAttackUntil, until);
+        else if (player instanceof ServerPlayer serverPlayer) {
+            ATTACK_LOCKS.merge(player.getUUID(), until, Math::max);
+            // Attacking invalidates an active guard before the next damage event.
+            input(serverPlayer, false, false);
+        }
+    }
+
+    public static void attacked(net.neoforged.neoforge.event.entity.player.AttackEntityEvent event) {
+        if (!event.isCanceled() && !event.getEntity().level().isClientSide) attackStarted(event.getEntity());
+    }
     public static final ResourceLocation GUARD_SLOWDOWN = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "guard_slowdown");
     private boolean held;
     private int elapsed;
@@ -36,11 +65,15 @@ public final class GuardState {
     private int phase;
     private ItemStack heldItem = ItemStack.EMPTY;
     private InteractionHand guardHand = InteractionHand.MAIN_HAND;
+    private InteractionHand lastToolHand;
+    private int toolHandRun;
     private long safetyThroughTick = -1;
     private int blocksTaken;
     private boolean breakPending;
     private boolean guardReleaseRequired;
+    private GuardPackets.Status lastStatus;
     private static boolean clientCooldownPreventsGuard = true;
+    private static boolean clientAllowEmptyHand;
 
     public enum Result { NONE, PERFECT, PARRY, BLOCK }
 
@@ -49,6 +82,7 @@ public final class GuardState {
     public static void forget(ServerPlayer player) {
         updateMovement(player, false);
         STATES.remove(player.getUUID());
+        ATTACK_LOCKS.remove(player.getUUID());
     }
 
     public static boolean eligible(Player player) {
@@ -56,10 +90,11 @@ public final class GuardState {
     }
 
     public static boolean eligible(Player player, InteractionHand hand) {
+        if (!attackReady(player)) return false;
         ItemStack stack = player.getItemInHand(hand);
         if (!stack.isEmpty() && (player.level().isClientSide ? clientCooldownPreventsGuard : GuardConfig.COOLDOWN_PREVENTS_GUARD.get())
             && player.getCooldowns().isOnCooldown(stack.getItem())) return false;
-        if (stack.isEmpty()) return GuardConfig.ALLOW_ANY_ITEM.get();
+        if (stack.isEmpty()) return player.level().isClientSide ? clientAllowEmptyHand : GuardConfig.ALLOW_EMPTY_HAND.get();
         if (GuardConfig.ALLOW_ANY_ITEM.get()) return !GuardItemRules.matches(stack, GuardConfig.EXCLUDED_ITEMS.get());
         if (GuardItemRules.shieldLike(stack)) return true;
         if (GuardItemRules.matches(stack, GuardConfig.INCLUDED_ITEMS.get())) return true;
@@ -79,8 +114,13 @@ public final class GuardState {
         clientCooldownPreventsGuard = enabled;
     }
 
+    public static void setClientAllowEmptyHand(boolean enabled) {
+        clientAllowEmptyHand = enabled;
+    }
+
     public static void input(ServerPlayer player, boolean down, boolean requestedOffhand) {
         GuardState state = STATES.computeIfAbsent(player.getUUID(), ignored -> new GuardState());
+        if (down && GuardStagger.stunned(player)) down = false;
         if (down && GuardConfig.CONSUMABLE_PRIORITY.get() && GuardItemRules.consumableInEitherHand(player)) down = false;
         if (!down) {
             // Releasing guard in the same tick as the final block must not skip the break penalty.
@@ -100,6 +140,25 @@ public final class GuardState {
         InteractionHand hand = eligible(player, requested) ? requested :
             eligible(player, requested == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND)
                 ? (requested == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND) : null;
+        InteractionHand shieldHand = eligible(player, InteractionHand.MAIN_HAND) && GuardItemRules.shieldLike(player.getMainHandItem()) ? InteractionHand.MAIN_HAND
+            : eligible(player, InteractionHand.OFF_HAND) && GuardItemRules.shieldLike(player.getOffhandItem()) ? InteractionHand.OFF_HAND : null;
+        InteractionHand weaponHand = shieldHand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+        boolean paired = shieldHand != null && !player.getItemInHand(weaponHand).isEmpty()
+            && !GuardItemRules.shieldLike(player.getItemInHand(weaponHand)) && eligible(player, weaponHand);
+        if (paired) {
+            hand = GuardConfig.SHIELD_RANDOM_HAND.get() ? (player.getRandom().nextBoolean() ? shieldHand : weaponHand)
+                : player.isShiftKeyDown() ? shieldHand : weaponHand;
+        }
+        if (shieldHand == null && eligible(player, InteractionHand.MAIN_HAND) && eligible(player, InteractionHand.OFF_HAND)
+            && !player.getMainHandItem().isEmpty() && !player.getOffhandItem().isEmpty()) {
+            if (player.isShiftKeyDown()) hand = InteractionHand.OFF_HAND;
+            else if (GuardConfig.DUAL_TOOL_RANDOM_HAND.get()) {
+                hand = state.toolHandRun >= 2 ? (state.lastToolHand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND)
+                    : player.getRandom().nextBoolean() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
+            }
+            state.toolHandRun = hand == state.lastToolHand ? state.toolHandRun + 1 : 1;
+            state.lastToolHand = hand;
+        }
         if (hand == null) return;
         if (GuardItemRules.shieldLike(player.getItemInHand(hand))
             && player.getCooldowns().isOnCooldown(player.getItemInHand(hand).getItem())) return;
@@ -121,6 +180,7 @@ public final class GuardState {
 
     public static void tick(PlayerTickEvent.Post event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        GuardRetaliation.tick(player);
         GuardState state = STATES.get(player.getUUID());
         if (state == null) return;
         if (state.recharge > 0 && state.phase != 3 && state.phase != 4) state.recharge--;
@@ -175,7 +235,7 @@ public final class GuardState {
         state.held = false;
     }
 
-    public static void updateMovement(Player player, boolean guarding) {
+    public static void updateMovement(LivingEntity player, boolean guarding) {
         AttributeInstance speed = player.getAttribute(Attributes.MOVEMENT_SPEED);
         if (speed == null) return;
         AttributeModifier modifier = speed.getModifier(GUARD_SLOWDOWN);
@@ -256,6 +316,11 @@ public final class GuardState {
         return result;
     }
 
+    public static boolean emptyHandGuard(ServerPlayer player) {
+        GuardState state = STATES.get(player.getUUID());
+        return state != null && state.heldItem.isEmpty();
+    }
+
     public static boolean isShieldBlocking(ServerPlayer player) {
         GuardState state = STATES.get(player.getUUID());
         return state != null && state.held && state.phase == 4 && player.isUsingItem()
@@ -281,7 +346,8 @@ public final class GuardState {
 
     public static void preventVanillaShieldUse(PlayerInteractEvent.RightClickItem event) {
         if (!(event.getEntity() instanceof ServerPlayer player)
-            || !GuardItemRules.shieldLike(player.getItemInHand(event.getHand()))
+            || !(GuardItemRules.shieldLike(player.getItemInHand(event.getHand()))
+                || GuardItemRules.simplySwordsWeapon(player.getItemInHand(event.getHand())))
             || GuardConfig.CONSUMABLE_PRIORITY.get() && GuardItemRules.consumableInEitherHand(player)) return;
         event.setCanceled(true);
         // Guard owns shield use. Consume this standalone attempt without a swing,
@@ -334,10 +400,22 @@ public final class GuardState {
         return dot >= Math.cos(Math.toRadians(GuardConfig.FACING_ANGLE.get() / 2.0D));
     }
 
+    public static InteractionHand poseHand(ServerPlayer player) {
+        GuardState state = STATES.get(player.getUUID());
+        return state != null && state.held && state.phase != 0 ? state.guardHand : null;
+    }
+
     private static void sync(ServerPlayer player, GuardState state) {
         boolean shield = GuardItemRules.shieldLike(state.heldItem);
-        PacketDistributor.sendToPlayer(player, new GuardPackets.Status(state.phase, state.elapsed, state.recharge,
+        GuardPackets.Status status = new GuardPackets.Status(state.phase, state.elapsed, state.recharge,
             shield ? GuardConfig.SHIELD_PARRY_TICKS.get() : GuardConfig.PARRY_TICKS.get(),
-            Math.max(1, state.rechargeDuration), state.guardHand == InteractionHand.OFF_HAND));
+            Math.max(1, state.rechargeDuration), state.guardHand == InteractionHand.OFF_HAND);
+        if (!status.equals(state.lastStatus)) {
+            if (state.lastStatus == null || (state.lastStatus.phase() == 0) != (status.phase() == 0)
+                || state.lastStatus.offhand() != status.offhand())
+                GuardPoses.broadcast(player, status.phase() == 0 ? null : state.guardHand);
+            state.lastStatus = status;
+            PacketDistributor.sendToPlayer(player, status);
+        }
     }
 }

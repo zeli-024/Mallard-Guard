@@ -78,7 +78,7 @@ public final class GuardCombatEffects {
         player.hurtMarked = true;
     }
 
-    public static void pushDefender(ServerPlayer player, Vec3 origin, boolean shield) {
+    public static void pushDefender(LivingEntity player, Vec3 origin, boolean shield) {
         if (!GuardConfig.DEFENDER_KNOCKBACK.get() || GuardConfig.KNOCKBACK_STRENGTH.get() == 0) return;
         Vec3 away = origin == null ? player.getLookAngle().scale(-1.0D) : player.position().subtract(origin);
         away = new Vec3(away.x, 0, away.z);
@@ -89,15 +89,11 @@ public final class GuardCombatEffects {
         player.hurtMarked = true;
     }
 
-    public static void pushAttacker(ServerPlayer player, LivingEntity attacker, boolean shield) {
+    public static void pushAttacker(LivingEntity player, LivingEntity attacker, boolean shield) {
         if (player.distanceToSqr(attacker) > 16.0D) return;
         int percent = shield ? GuardConfig.SHIELD_PARRY_PUSHBACK_PERCENT.get() : GuardConfig.TOOL_PUSHBACK_PERCENT.get();
         if (percent == 0) return;
-        Vec3 away = attacker.position().subtract(player.position());
-        if (away.horizontalDistanceSqr() < 1.0E-6D) away = player.getLookAngle();
-        away = new Vec3(away.x, 0, away.z).normalize();
-        attacker.setDeltaMovement(attacker.getDeltaMovement().add(away.scale(percent / 100.0D * 0.5D)));
-        attacker.hurtMarked = true;
+        pushLikeHit(player, attacker, percent);
     }
 
     public static void shieldPerfect(ServerPlayer player, float incomingDamage) {
@@ -111,19 +107,23 @@ public final class GuardCombatEffects {
             Vec3 toTarget = target.getEyePosition().subtract(eye);
             if (toTarget.lengthSqr() < 1.0E-6D || toTarget.lengthSqr() > reach * reach ||
                 player.getLookAngle().dot(toTarget.normalize()) < minDot) continue;
-            int push = GuardConfig.SHIELD_PUSHBACK_PERCENT.get();
-            if (push > 0) {
-                Vec3 horizontal = new Vec3(toTarget.x, 0, toTarget.z);
-                if (horizontal.lengthSqr() > 1.0E-6D) {
-                    target.setDeltaMovement(target.getDeltaMovement().add(horizontal.normalize().scale(push / 200.0D)));
-                    target.hurtMarked = true;
-                }
-            }
+            pushLikeHit(player, target, GuardConfig.SHIELD_PUSHBACK_PERCENT.get());
             if (GuardConfig.SHIELD_STUN_TICKS.get() > 0 && (!boss(target) || allowedBoss(target)))
                 STUNNED.put(target, GuardConfig.SHIELD_STUN_TICKS.get());
             float damage = incomingDamage * GuardConfig.SHIELD_RETALIATION_PERCENT.get() / 100.0F;
-            if (damage > 0) MallardGuard.returnDamage(player, target, damage);
+            if (damage > 0) GuardRetaliation.damage(player, target, damage);
         }
+    }
+
+    private static void pushLikeHit(LivingEntity defender, LivingEntity target, int percent) {
+        if (percent <= 0) return;
+        double dx = defender.getX() - target.getX();
+        double dz = defender.getZ() - target.getZ();
+        if (dx * dx + dz * dz < 1.0E-6D) {
+            Vec3 look = defender.getLookAngle();
+            dx = -look.x; dz = -look.z;
+        }
+        target.knockback(percent / 200.0D, dx, dz);
     }
 
     private static boolean boss(LivingEntity target) {
@@ -146,7 +146,7 @@ public final class GuardCombatEffects {
     }
 
     public static boolean stunned(Entity entity) {
-        return entity instanceof LivingEntity living && STUNNED.containsKey(living);
+        return entity instanceof ServerPlayer player && GuardStagger.stunned(player) || entity instanceof LivingEntity living && STUNNED.containsKey(living);
     }
 
     public static void tickStun(EntityTickEvent.Post event) {
@@ -169,18 +169,42 @@ public final class GuardCombatEffects {
     }
 
     public static void projectileImpact(ProjectileImpactEvent event) {
-        if (!(event.getProjectile().level() instanceof ServerLevel) || !(event.getRayTraceResult() instanceof EntityHitResult hit)
-            || !(hit.getEntity() instanceof ServerPlayer player) || event.getProjectile().getOwner() == player) return;
+        if (!(event.getProjectile().level() instanceof ServerLevel) || !(event.getRayTraceResult() instanceof EntityHitResult hit)) return;
+        if (hit.getEntity() instanceof net.minecraft.world.entity.Mob mob) {
+            mobProjectile(event, mob, hit);
+            return;
+        }
+        if (!(hit.getEntity() instanceof ServerPlayer player) || event.getProjectile().getOwner() == player) return;
         Projectile projectile = event.getProjectile();
         GuardState.Result result = GuardState.handleProjectile(player, projectile);
         if (result == GuardState.Result.NONE) return;
         boolean shield = GuardState.shieldGuard(player);
+        if (result == GuardState.Result.PERFECT) GuardStagger.perfect(player);
         event.setCanceled(true);
         Entity owner = projectile.getOwner();
         Vec3 sparkDirection = owner != null && owner != player ? owner.position().subtract(player.position())
             : projectile.getDeltaMovement().scale(-1.0D);
+        reflectProjectile(player, projectile, result == GuardState.Result.PERFECT);
+        PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : result == GuardState.Result.BLOCK ? 3 : 1, GuardState.guardBreakPending(player), result == GuardState.Result.PERFECT ? GuardRetaliation.begin(player) : 0));
+        GuardEffects.onHit(player, owner instanceof net.minecraft.world.entity.player.Player attackingPlayer ? player.damageSources().playerAttack(attackingPlayer)
+            : owner instanceof LivingEntity attackingMob ? player.damageSources().mobAttack(attackingMob) : player.damageSources().playerAttack(player), result, sparkDirection);
+        GuardState.wear(player, result);
+        if (result != GuardState.Result.BLOCK) pushDefender(player, hit.getLocation(), shield);
+        if (shield && result == GuardState.Result.PERFECT) {
+            // Projectile impact fires before Minecraft calculates its actual damage.
+            // Arrow base damage is known; other modded projectiles use a modest estimate.
+            float estimate = projectile instanceof AbstractArrow arrow ? (float) arrow.getBaseDamage()
+                : (float) Math.max(2.0D, projectile.getDeltaMovement().length() * 2.0D);
+            shieldPerfect(player, estimate);
+        } else if ((result == GuardState.Result.PARRY || !shield && result == GuardState.Result.PERFECT)
+            && owner instanceof LivingEntity attacker)
+            pushAttacker(player, attacker, shield);
+    }
+
+    public static void reflectProjectile(LivingEntity player, Projectile projectile, boolean perfect) {
+        Entity owner = projectile.getOwner();
         Vec3 direction;
-        if (result == GuardState.Result.PERFECT && owner != null && owner != player) {
+        if (perfect && owner != null && owner != player) {
             direction = owner.getEyePosition().subtract(player.getEyePosition());
         } else {
             // Keep a firm horizontal component; downward deflections should be as common as upward ones.
@@ -195,18 +219,29 @@ public final class GuardCombatEffects {
         projectile.setPos(player.getEyePosition().add(direction.scale(0.85D)));
         projectile.shoot(direction.x, direction.y, direction.z, (float) speed, 0.0F);
         projectile.hasImpulse = true;
-        PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : result == GuardState.Result.BLOCK ? 3 : 1, GuardState.guardBreakPending(player)));
-        GuardEffects.onHit(player, player.damageSources().playerAttack(player), result, sparkDirection);
-        GuardState.wear(player, result);
-        if (result != GuardState.Result.BLOCK) pushDefender(player, hit.getLocation(), shield);
-        if (shield && result == GuardState.Result.PERFECT) {
-            // Projectile impact fires before Minecraft calculates its actual damage.
-            // Arrow base damage is known; other modded projectiles use a modest estimate.
-            float estimate = projectile instanceof AbstractArrow arrow ? (float) arrow.getBaseDamage()
-                : (float) Math.max(2.0D, projectile.getDeltaMovement().length() * 2.0D);
-            shieldPerfect(player, estimate);
-        } else if ((result == GuardState.Result.PARRY || !shield && result == GuardState.Result.PERFECT)
-            && owner instanceof LivingEntity attacker)
-            pushAttacker(player, attacker, shield);
+    }
+
+    private static void mobProjectile(ProjectileImpactEvent event, net.minecraft.world.entity.Mob mob, EntityHitResult hit) {
+        Projectile projectile = event.getProjectile();
+        Entity owner = projectile.getOwner();
+        if (owner == mob) return;
+        GuardState.Result result = GuardMobState.react(mob, projectile.position(), GuardDamageRules.canParryProjectile(projectile), true, false);
+        // Cache the chosen outcome so the damage event cannot process the same projectile twice.
+        if (result == GuardState.Result.NONE || result == GuardState.Result.BLOCK &&
+            mob.getRandom().nextDouble() * 100.0D >= GuardConfig.BLOCK_DEFLECT_CHANCE.get()) {
+            GuardMobState.projectileResult(projectile, mob, result);
+            return;
+        }
+        boolean shield = GuardItemRules.shieldLike(mob.getItemInHand(GuardMobState.defenseHand(mob)));
+        event.setCanceled(true);
+        reflectProjectile(mob, projectile, result == GuardState.Result.PERFECT);
+        DamageSource source = mob.damageSources().mobAttack(owner instanceof LivingEntity living ? living : mob);
+        GuardEffects.onMobHit(mob, source, result, shield);
+        float amount = projectile instanceof AbstractArrow arrow ? (float) arrow.getBaseDamage() : 2.0F;
+        GuardMobState.wear(mob, result, amount);
+        if (result != GuardState.Result.BLOCK) {
+            pushDefender(mob, hit.getLocation(), shield);
+            if (owner instanceof LivingEntity attacker) pushAttacker(mob, attacker, shield);
+        }
     }
 }

@@ -14,7 +14,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.network.chat.Component;
+import net.neoforged.fml.ModList;
 import net.minecraft.client.AttackIndicatorStatus;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.RandomSource;
@@ -52,6 +53,9 @@ public final class GuardClient {
         InputConstants.Type.MOUSE, GLFW.GLFW_MOUSE_BUTTON_RIGHT, "key.categories.mallardguard");
     private static final KeyMapping CONFIG_KEY = new KeyMapping("key.mallardguard.open_config",
         InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_CONTROL, "key.categories.mallardguard");
+    private static final ResourceLocation STAGGER_FULL = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/stagger_full.png");
+    private static final ResourceLocation STAGGER_EMPTY = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/stagger_empty.png");
+    private static final ResourceLocation RED_SHIELD = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield_red.png");
     private static final ResourceLocation SHIELD = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/shield.png");
     private static final ResourceLocation BLOCK_VIGNETTE = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "textures/gui/block_vignette.png");
     private static final ResourceLocation[] MEME_FLASHES = {
@@ -92,7 +96,37 @@ public final class GuardClient {
     private static long strainedBlockStartMs;
     private static boolean readyGlowQueued;
     private static boolean wasGuardKeyDown;
+    private static boolean wasAttackDown;
+    private static long reportedAttackTick = Long.MIN_VALUE;
+
+    private static void reportAttackStart(Minecraft mc) {
+        if (mc.player == null || mc.getConnection() == null || mc.screen != null) return;
+        long tick = mc.player.level().getGameTime();
+        if (reportedAttackTick == tick) return;
+        reportedAttackTick = tick;
+        GuardState.attackStarted(mc.player);
+        PacketDistributor.sendToServer(new GuardPackets.AttackStarted());
+    }
+
+    @SubscribeEvent
+    public static void attackInput(ClientTickEvent.Pre event) {
+        Minecraft mc = Minecraft.getInstance();
+        boolean down = mc.player != null && mc.screen == null && mc.options.keyAttack.isDown();
+        if (down && !wasAttackDown) reportAttackStart(mc);
+        wasAttackDown = down;
+    }
+
+    @SubscribeEvent
+    public static void attackClick(InputEvent.InteractionKeyMappingTriggered event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (event.isAttack() && mc.player != null && mc.player.level().getGameTime() < staggeredUntilTick) {
+            event.setCanceled(true); event.setSwingHand(false); return;
+        }
+        if (event.isAttack() && !event.isCanceled()) reportAttackStart(Minecraft.getInstance());
+    }
     private static boolean waitForGuardRelease;
+    private static ItemStack guardedShieldStack = ItemStack.EMPTY;
+    private static InteractionHand guardedShieldHand;
     private static AttackIndicatorStatus savedAttackIndicator;
     private static boolean policyKnown, policyEnabled, policyRequested;
     private static int dontEnforceMask;
@@ -107,6 +141,7 @@ public final class GuardClient {
 
     public static void registerConfigScreen(ModContainer container) {
         container.registerExtensionPoint(IConfigScreenFactory.class, (mod, parent) -> {
+            if (GuardConfig.pendingUpdates() > 0) return new GuardConfigUpdateScreen(parent);
             if (Minecraft.getInstance().getConnection() == null)
                 return new GuardConfigScreen(GuardConfig.defaultSnapshot(false), parent);
             return new GuardConfigLoadingScreen(parent);
@@ -115,6 +150,10 @@ public final class GuardClient {
 
     public static boolean isStanceActive() {
         return phase != 0;
+    }
+
+    public static InteractionHand thirdPersonHand() {
+        return phase == 0 ? null : offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
     }
 
     public static InteractionHand guardHand(Player player) {
@@ -153,14 +192,22 @@ public final class GuardClient {
             readyGlowQueued = true;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null) {
-            if (data.phase() == 0 && mc.player.isUsingItem()
-                && GuardItemRules.shieldLike(mc.player.getUseItem())) mc.player.stopUsingItem();
+        if (data.phase() == 0) {
+            if (ownsGuardedShieldUse(mc)) mc.player.stopUsingItem();
+            clearGuardedShieldUse();
+        } else if (mc.player != null) {
             InteractionHand hand = data.offhand() ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-            if (data.phase() != 0 && GUARD_KEY.isDown() && (!mc.player.isUsingItem() || mc.player.getUsedItemHand() != hand)
+            if (GUARD_KEY.isDown() && (!mc.player.isUsingItem() || mc.player.getUsedItemHand() != hand)
                 && GuardItemRules.shieldLike(mc.player.getItemInHand(hand))
                 && !mc.player.getCooldowns().isOnCooldown(mc.player.getItemInHand(hand).getItem())) mc.player.startUsingItem(hand);
+            if (guardedShieldStack.isEmpty() && GUARD_KEY.isDown() && !waitForGuardRelease
+                && mc.player.isUsingItem() && mc.player.getUsedItemHand() == hand
+                && mc.player.getUseItem() == mc.player.getItemInHand(hand)
+                && GuardItemRules.shieldLike(mc.player.getUseItem())) {
+                guardedShieldHand = hand; guardedShieldStack = mc.player.getUseItem();
+            }
         }
+        if (phase == 0 && data.phase() != 0) GuardFeint.stopAttackAnimation();
         phase = data.phase();
         offhand = data.offhand();
         elapsed = data.elapsed();
@@ -172,10 +219,25 @@ public final class GuardClient {
     public static void settings(GuardPackets.Settings data) {
         serverConsumablePriority = data.consumablePriority();
         Minecraft minecraft = Minecraft.getInstance();
-        // Ignore a late reply if the player already backed out of the Mods menu.
-        if (minecraft.screen != null && !(minecraft.screen instanceof GuardConfigLoadingScreen)) return;
-        Screen parent = minecraft.screen instanceof GuardConfigLoadingScreen loading ? loading.parent() : null;
-        minecraft.setScreen(new GuardConfigScreen(data, parent));
+        // Settings can arrive during join; only an explicit editor request opens UI.
+        if (!(minecraft.screen instanceof GuardConfigLoadingScreen loading)) return;
+        Screen parent = loading.parent();
+        minecraft.setScreen(GuardConfig.pendingUpdates() > 0
+            ? new GuardConfigUpdateScreen(parent) : new GuardConfigScreen(data, parent));
+    }
+
+    public static void serverConfigUpdate(GuardPackets.ConfigUpdate data) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!(minecraft.screen instanceof GuardConfigLoadingScreen loading)) return;
+        Screen parent = loading.parent();
+        minecraft.setScreen(new GuardConfigUpdateScreen(parent, data.changes()));
+    }
+
+    public static void openConfig() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen != null && !(mc.screen instanceof GuardConfigLoadingScreen)) return;
+        mc.setScreen(GuardConfig.pendingUpdates() > 0 ? new GuardConfigUpdateScreen(null)
+            : new GuardConfigLoadingScreen(null));
     }
 
     public static void damageState(GuardPackets.DamageState data) {
@@ -189,11 +251,132 @@ public final class GuardClient {
 
     private static boolean serverConsumablePriority = true;
     private static GuardPackets.ShieldSettings latestShieldSettings;
+    private static GuardPackets.StaggerSettings latestStaggerSettings;
+    private static int staggerCells, staggerMaximum, staggerPreviousCells;
+    private static long staggerCellChangeStart;
+    private static boolean staggerEnabled;
+    private static long mobCounterStart, staggeredUntilTick;
+    private static int mobReactionResult;
+    private static long staggerRecoveryStart;
+    private static boolean wasStaggered;
+    private static net.minecraft.client.player.LocalPlayer staggerPlayer;
+    public static GuardPackets.StaggerSettings currentStaggerSettings() { return latestStaggerSettings == null ? GuardConfig.staggerSnapshot(true) : latestStaggerSettings; }
+    public static void staggerSettings(GuardPackets.StaggerSettings d) {
+        latestStaggerSettings = d;
+        if (!d.enabled()) staggeredUntilTick = Long.MIN_VALUE;
+        if (Minecraft.getInstance().screen instanceof GuardConfigScreen screen) screen.updateStaggerSettings(d);
+    }
+    public static void stagger(GuardPackets.Stagger d) {
+        var player = Minecraft.getInstance().player;
+        int maximum = Math.clamp(d.maximum(), 1, 10), cells = Math.clamp(d.cells(), 0, maximum);
+        if (player == staggerPlayer && player != null && player.isAlive() && staggerEnabled && d.enabled()
+            && staggerMaximum == maximum && staggerCells != cells) {
+            staggerPreviousCells = staggerCells;
+            staggerCellChangeStart = System.currentTimeMillis();
+        } else if (player != staggerPlayer || !d.enabled() || staggerMaximum != maximum) staggerCellChangeStart = 0;
+        staggerMaximum = maximum; staggerCells = cells; staggerEnabled = d.enabled();
+        if (player != staggerPlayer) { staggerPlayer = player; wasStaggered = false; staggerRecoveryStart = 0; }
+        staggeredUntilTick = player != null && player.isAlive() && d.enabled() && d.stunTicks() > 0
+            ? player.level().getGameTime() + Math.clamp(d.stunTicks(), 0, 60) : Long.MIN_VALUE;
+    }
+    public static void mobCounter(GuardPackets.MobCounter d) {
+        Runnable feedback = () -> {
+            mobReactionResult = d.perfect() ? 2 : 1;
+            var player = Minecraft.getInstance().player;
+            if (player == null || !player.isAlive()) return;
+            mobCounterStart = System.currentTimeMillis();
+            GuardChromatic.trigger(d.perfect());
+        };
+        if (d.perfect()) GuardHitlag.triggerMobCounter(feedback);
+        else feedback.run();
+    }
+    private static boolean staggerActive() {
+        var player = Minecraft.getInstance().player;
+        return staggerEnabled && player != null && player == staggerPlayer && player.isAlive() && player.level().getGameTime() < staggeredUntilTick;
+    }
+    private static void renderStagger(GuiGraphics g) {
+        var mc = Minecraft.getInstance();
+        if (!staggerEnabled || staggerMaximum <= 0 || mc.player == null || !mc.player.isAlive() || mc.player.isSpectator()) return;
+        int occupied = Math.max(mc.gui.leftHeight, mc.gui.rightHeight);
+        int y = g.guiHeight() - Math.max(49, occupied) - GuardConfig.STAGGER_HUD_OFFSET.get();
+        long age = staggerCellChangeStart == 0 ? 600 : System.currentTimeMillis() - staggerCellChangeStart;
+        boolean losing = staggerPreviousCells > staggerCells && age >= 0 && age < 600;
+        boolean gaining = staggerPreviousCells < staggerCells && age >= 0 && age < 450;
+        boolean flash = losing && age / 100 % 2 == 0;
+        if (GuardConfig.STAGGER_COMPACT.get()) {
+            int x = g.guiWidth() / 2 - 4;
+            int motion = losing && age < 250 ? (int) (age / 50 % 3) - 1
+                : gaining ? -(int) Math.round(2 * Math.sin(Math.PI * age / 450.0)) : 0;
+            drawStaggerCell(g, x, y + motion, 8, staggerCells > 0);
+            if (flash) drawStaggerCellFlash(g, x, y + motion, 8);
+            drawCellCount(g, x - 10, y + motion, staggerCells);
+            drawCellMultiplier(g, x - 17, y + motion);
+        } else {
+            int width = staggerMaximum * 10 - 1, x = (g.guiWidth() - width) / 2;
+            for (int i = 0; i < staggerMaximum; i++) {
+                boolean lostCell = losing && i >= staggerCells && i < staggerPreviousCells;
+                boolean gainedCell = gaining && i >= staggerPreviousCells && i < staggerCells;
+                int motion = lostCell && age < 250 ? (int) ((age / 50 + i) % 3) - 1 : 0;
+                if (gainedCell) motion = -(int) Math.round(2 * Math.sin(Math.PI * age / 450.0));
+                drawStaggerCell(g, x + i * 10, y + motion, 9, i < staggerCells);
+                if (lostCell && flash) drawStaggerCellFlash(g, x + i * 10, y + motion, 9);
+            }
+        }
+        // Reserve our row in the same stack used by vanilla and cooperating HUD mods.
+        mc.gui.leftHeight = mc.gui.rightHeight = Math.max(49, occupied) + 10 + GuardConfig.STAGGER_HUD_OFFSET.get();
+    }
+    private static void drawStaggerCell(GuiGraphics graphics, int x, int y, int size, boolean full) {
+        graphics.blit(full ? STAGGER_FULL : STAGGER_EMPTY, x, y, size, size, 0, 0, 9, 9, 9, 9);
+    }
+    private static void drawStaggerCellFlash(GuiGraphics graphics, int x, int y, int size) {
+        graphics.flush(); RenderSystem.enableBlend(); RenderSystem.defaultBlendFunc();
+        RenderSystem.setShaderColor(1.35F, 1.35F, 1.35F, 0.8F);
+        drawStaggerCell(graphics, x, y, size, true);
+        graphics.flush(); RenderSystem.setShaderColor(1, 1, 1, 1); RenderSystem.disableBlend();
+    }
+    // Custom bitmap numerals, including a compact two-digit 10, inside an 8x8 canvas.
+    private static final int[] CELL_TEN = {0b0100111,0b1100101,0b0100101,0b0100101,0b1110111};
+    private static final int[][] CELL_DIGITS = {
+        {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14}, {14,17,1,2,4,8,31},
+        {30,1,1,14,1,1,30}, {2,6,10,18,31,2,2}, {31,16,16,30,1,1,30},
+        {14,16,16,30,17,17,14}, {31,1,2,4,8,8,8}, {14,17,17,14,17,17,14}, {14,17,17,15,1,1,14}
+    };
+    private static void drawCellMultiplier(GuiGraphics graphics, int x, int y) {
+        for (int pass = 0; pass < 2; pass++) {
+            int offset = pass == 0 ? 1 : 0, color = pass == 0 ? 0xFF302735 : 0xFFE8DDED;
+            for (int row = 0; row < 5; row++) for (int col = 0; col < 5; col++)
+                if (row == col || row + col == 4)
+                    graphics.fill(x + col + offset, y + row + 1 + offset, x + col + 1 + offset, y + row + 2 + offset, color);
+        }
+    }
+    private static void drawCellCount(GuiGraphics graphics, int x, int y, int count) {
+        for (int pass = 0; pass < 2; pass++) {
+            int offset = pass == 0 ? 1 : 0, color = pass == 0 ? 0xFF302735 : 0xFFE8DDED;
+            if (count == 10) {
+                int[] ten = CELL_TEN;
+                for (int row = 0; row < 5; row++) for (int col = 0; col < 7; col++)
+                    if ((ten[row] & (1 << (6 - col))) != 0) graphics.fill(x + col + offset, y + row + 1 + offset, x + col + 1 + offset, y + row + 2 + offset, color);
+            } else {
+                int[] digit = CELL_DIGITS[Math.clamp(count, 0, 9)];
+                for (int row = 0; row < 7; row++) for (int col = 0; col < 5; col++)
+                    if ((digit[row] & (1 << (4 - col))) != 0) graphics.fill(x + col + 1 + offset, y + row + offset, x + col + 2 + offset, y + row + 1 + offset, color);
+            }
+        }
+    }
+    private static GuardPackets.MobSettings latestMobSettings;
+    public static GuardPackets.MobSettings currentMobSettings() {
+        return latestMobSettings == null ? GuardConfig.mobSnapshot(true) : latestMobSettings;
+    }
+    public static void mobSettings(GuardPackets.MobSettings data) {
+        latestMobSettings = data;
+        if (Minecraft.getInstance().screen instanceof GuardConfigScreen screen) screen.updateMobSettings(data);
+    }
 
     public static void shieldSettings(GuardPackets.ShieldSettings data) {
         latestShieldSettings = data;
         serverConsumablePriority = data.consumablePriority();
         GuardState.setClientCooldownPreventsGuard(data.cooldownPreventsGuard());
+        GuardState.setClientAllowEmptyHand(data.allowEmptyHand());
         if (Minecraft.getInstance().screen instanceof GuardConfigScreen screen) screen.updateShieldSettings(data);
     }
 
@@ -211,20 +394,20 @@ public final class GuardClient {
 
     public static void clientPolicy(GuardPackets.ClientPolicy data) {
         int[] values = GuardClientPreset.parse(data.defaults());
-        if (values == null || data.dontEnforceMask() < 0 || data.dontEnforceMask() > 15) return;
+        if (values == null || data.dontEnforceMask() < 0 || data.dontEnforceMask() > GuardClientPreset.ALL_CATEGORIES) return;
         if (!policyKnown) {
             personalDefaults = GuardClientPreset.readLocal();
             policyKnown = true;
         }
         boolean firstActivation = data.enabled() && !policyEnabled;
         if (!data.enabled() && policyEnabled) {
-            for (int category : new int[] {1, 2, 4, 8}) GuardClientPreset.apply(personalDefaults, category);
+            for (int category : GuardClientPreset.CATEGORIES) GuardClientPreset.apply(personalDefaults, category);
         }
         policyEnabled = data.enabled();
         dontEnforceMask = data.dontEnforceMask();
         policyDefaults = values;
         if (policyEnabled) {
-            for (int category : new int[] {1, 2, 4, 8}) {
+            for (int category : GuardClientPreset.CATEGORIES) {
                 if (firstActivation || clientCategoryLocked(category)) GuardClientPreset.apply(values, category);
             }
             if (firstActivation) {
@@ -244,17 +427,19 @@ public final class GuardClient {
             for (int index = 0; index < edited.length; index++) {
                 if (!clientCategoryLocked(GuardClientPreset.categoryOf(index))) personalDefaults[index] = edited[index];
             }
-            for (int category : new int[] {1, 2, 4, 8})
+            for (int category : GuardClientPreset.CATEGORIES)
                 if (clientCategoryLocked(category)) GuardClientPreset.apply(personalDefaults, category);
             GuardConfig.CLIENT_SPEC.save();
-            for (int category : new int[] {1, 2, 4, 8})
+            GuardConfig.clearConfigBackups();
+            for (int category : GuardClientPreset.CATEGORIES)
                 if (clientCategoryLocked(category)) GuardClientPreset.apply(policyDefaults, category);
         } else GuardConfig.CLIENT_SPEC.save();
+            GuardConfig.clearConfigBackups();
     }
 
     private static void clearClientPolicy() {
         if (policyKnown && policyEnabled && personalDefaults != null)
-            for (int category : new int[] {1, 2, 4, 8}) GuardClientPreset.apply(personalDefaults, category);
+            for (int category : GuardClientPreset.CATEGORIES) GuardClientPreset.apply(personalDefaults, category);
         policyKnown = policyEnabled = false;
         policyRequested = false;
         dontEnforceMask = 0;
@@ -265,16 +450,21 @@ public final class GuardClient {
         if (data.result() < 1 || data.result() > 3) return;
         hitResult = data.result();
         guardBreakHitResult = data.guardBroken();
-        resultStartMs = System.currentTimeMillis();
+        resultStartMs = data.result() == 3 ? System.currentTimeMillis() : 0;
         screenFlashStartMs = 0;
         memeStartMs = 0;
         int sequence = ++feedbackSequence;
         if (data.result() == 1 || data.result() == 2) {
             int result = data.result();
             boolean meme = GuardConfig.MEME_FLASH.get();
-            GuardHitlag.trigger(() -> {
+            GuardHitlag.trigger(result == 2 || !GuardConfig.PERFECT_ONLY_HITLAG.get(), result == 2, () -> {
+                if (data.retaliationToken() > 0 && Minecraft.getInstance().getConnection() != null)
+                    PacketDistributor.sendToServer(new GuardPackets.FeedbackComplete(data.retaliationToken()));
                 if (sequence != feedbackSequence || Minecraft.getInstance().player == null) return;
-                screenFlashStartMs = System.currentTimeMillis();
+                if (Minecraft.getInstance().player == null || !Minecraft.getInstance().player.isAlive()) return;
+                GuardChromatic.trigger(data.result() == 2);
+                resultStartMs = System.currentTimeMillis();
+                screenFlashStartMs = resultStartMs;
                 if (meme) {
                     memeStartMs = screenFlashStartMs;
                     playMemeFlashSound(result);
@@ -293,7 +483,7 @@ public final class GuardClient {
     }
 
     public static void hitSound(GuardPackets.HitSound data) {
-        if (data.defender() && data.parry() && GuardConfig.HITLAG_FRAMES.get() > 0) {
+        if (data.defender() && data.parry()) {
             GuardHitlag.afterFreeze(() -> playHitSoundNow(data));
             return;
         }
@@ -309,12 +499,14 @@ public final class GuardClient {
             case 3 -> GuardSounds.BLOCK;
             case 4 -> GuardSounds.SHIELD_PERFECT;
             case 5 -> GuardSounds.FALL_PARRY;
+            case 6 -> GuardSounds.FALL_REGULAR;
             default -> List.of();
         };
         if (data.variant() < 0 || data.variant() >= sounds.size()) return;
         int individual = switch (data.kind()) {
             case 1 -> GuardConfig.LOCAL_PARRY_VOLUME.get();
             case 2, 4, 5 -> GuardConfig.LOCAL_PERFECT_VOLUME.get();
+            case 6 -> GuardConfig.LOCAL_PARRY_VOLUME.get();
             default -> GuardConfig.LOCAL_BLOCK_VOLUME.get();
         };
         float gain = data.volume() * GuardConfig.LOCAL_MASTER_VOLUME.get() / 100.0F * individual / 100.0F;
@@ -324,6 +516,7 @@ public final class GuardClient {
             case 3 -> GuardSounds.BLOCK_BOOST;
             case 4 -> GuardSounds.SHIELD_PERFECT_BOOST;
             case 5 -> GuardSounds.FALL_PARRY_BOOST;
+            case 6 -> GuardSounds.FALL_REGULAR_BOOST;
             default -> GuardSounds.PARRY_BOOST;
         };
         playWithHeadroom(mc, data.x(), data.y(), data.z(), sounds.get(data.variant()).get(), gain);
@@ -347,20 +540,49 @@ public final class GuardClient {
     }
 
     public static void sparks(GuardPackets.Sparks data) {
+        if (data.defender()) {
+            GuardHitlag.afterFreeze(() -> spawnSparks(data));
+            return;
+        }
+        spawnSparks(data);
+    }
+
+    private static void tintedParticle(Minecraft mc, net.minecraft.core.particles.SimpleParticleType type, GuardPackets.Sparks data,
+        double x, double y, double z, double dx, double dy, double dz) {
+        var particle = mc.particleEngine.createParticle(type, x, y, z, dx, dy, dz);
+        if (particle != null && data.tint() >= 0) {
+            if (particle instanceof GuardSparkParticle spark) spark.tint(data.tint());
+            else particle.setColor((data.tint() >> 16 & 255) / 255.0F, (data.tint() >> 8 & 255) / 255.0F, (data.tint() & 255) / 255.0F);
+        }
+    }
+    private static void spawnSparks(GuardPackets.Sparks data) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || data.count() < 1 || data.count() > 32) return;
+        if (mc.level == null || data.count() < 0 || data.count() > 32) return;
         // Local effect toggles do not affect what other players see.
         if (GuardConfig.PARTICLE_FLASHES_ENABLED.get()) {
-            mc.level.addParticle(data.perfect() ? GuardParticles.PERFECT_FLASH.get() : GuardParticles.PARRY_FLASH.get(),
-                data.x(), data.y(), data.z(), 0, 0, 0);
+            tintedParticle(mc, data.perfect() ? GuardParticles.PERFECT_FLASH.get() : GuardParticles.PARRY_FLASH.get(), data, data.x(), data.y(), data.z(), 0, 0, 0);
         }
-        if (!GuardConfig.SPARKS_ENABLED.get()) return;
+        if (data.count() == 0) return;
+        if (GuardConfig.STREAKS_ENABLED.get() && GuardConfig.STREAK_LENGTH.get() > 0
+            && GuardConfig.STREAK_DOT_SIZE.get() > 0 && GuardConfig.STREAK_STRETCH_SPEED.get() > 0) {
+            int count = (int) Math.round((data.perfect() ? 12 : 7)
+                * (data.perfect() ? GuardConfig.STREAK_AMOUNT.get() : GuardConfig.REGULAR_STREAK_AMOUNT.get()) * 0.75D / 100.0D);
+            double angle = mc.level.random.nextDouble() * Math.PI * 2.0D;
+            for (int i = 0; i < count; i++) {
+                // Dotted lines keep the spherical pattern even for shield impacts.
+                Vec3 direction = burstDirection(i, count, angle, mc.level.random, data, false);
+                double lineMarker = data.perfect() ? 1.0D : 2.0D;
+                tintedParticle(mc, GuardParticles.STREAK_DOT.get(), data, data.x(), data.y(), data.z(),
+                    direction.x * lineMarker, direction.y * lineMarker, direction.z * lineMarker);
+            }
+        }
+        if (!GuardConfig.SPARKS_ENABLED.get() || GuardConfig.SPARK_LIFETIME.get() == 0) return;
         if (data.perfect()) {
             // Particle Interactions' separate star sprites accompany only perfect parries.
             double starOffset = mc.level.random.nextDouble() * Math.PI * 2.0D;
             int stars = GuardConfig.STAR_COUNT.get();
             for (int i = 0; i < stars; i++) {
-                Vec3 direction = burstDirection(i, stars, starOffset, mc.level.random, data);
+                Vec3 direction = burstDirection(i, stars, starOffset, mc.level.random, data, true);
                 double x = data.x() + (mc.level.random.nextDouble() - 0.5D) * 0.06D;
                 double y = data.y() + (mc.level.random.nextDouble() - 0.5D) * 0.06D;
                 double z = data.z() + (mc.level.random.nextDouble() - 0.5D) * 0.06D;
@@ -372,11 +594,10 @@ public final class GuardClient {
             }
         }
         double angleOffset = mc.level.random.nextDouble() * Math.PI * 2.0D;
-        int amount = (int) Math.round(data.count() * (data.perfect() ? GuardConfig.PERFECT_SPARK_COUNT.get() : GuardConfig.REGULAR_SPARK_COUNT.get()) / 100.0D);
+        int amount = (int) Math.round(data.count() * (data.perfect() ? GuardConfig.PERFECT_SPARK_COUNT.get() : GuardConfig.REGULAR_SPARK_COUNT.get()) * 0.7D / 100.0D);
         for (int i = 0; i < amount; i++) {
-            Vec3 direction = burstDirection(i, amount, angleOffset, mc.level.random, data);
-            // One anvil-style spray per hit. The old three delayed emissions
-            // made a single parry look as though the effect had played twice.
+            Vec3 direction = burstDirection(i, amount, angleOffset, mc.level.random, data, true);
+            // One outward spray per hit.
             double x = data.x() + (mc.level.random.nextDouble() - 0.5D) * 0.06D;
             double y = data.y() + (mc.level.random.nextDouble() - 0.5D) * 0.06D;
             double z = data.z() + (mc.level.random.nextDouble() - 0.5D) * 0.06D;
@@ -390,8 +611,8 @@ public final class GuardClient {
         }
     }
 
-    private static Vec3 burstDirection(int index, int count, double offset, RandomSource random, GuardPackets.Sparks hit) {
-        if (!hit.fall() && hit.shield()) {
+    private static Vec3 burstDirection(int index, int count, double offset, RandomSource random, GuardPackets.Sparks hit, boolean sparkPattern) {
+        if (sparkPattern && !hit.fall() && hit.shield() && latestShieldSettings != null && latestShieldSettings.coneSparks()) {
             // Shield impacts fan toward the incoming attacker across a 90-degree horizontal arc.
             double facing = Math.atan2(hit.directionZ(), hit.directionX());
             double angle = facing - Math.PI / 4.0D + Math.PI / 2.0D * (index + 0.5D) / Math.max(1, count);
@@ -399,7 +620,7 @@ public final class GuardClient {
             double horizontal = Math.sqrt(1.0D - vertical * vertical);
             return new Vec3(Math.cos(angle) * horizontal, vertical, Math.sin(angle) * horizontal);
         }
-        if (hit.fall() || GuardConfig.SPARK_RING.get()) {
+        if (sparkPattern && (hit.fall() || !hit.shield() && GuardConfig.SPARK_RING.get())) {
             // Four close diagonal arms form a short X instead of a wide, even ring.
             int arm = index % 4;
             double angle = offset + Math.PI / 4.0D + arm * Math.PI / 2.0D
@@ -412,8 +633,8 @@ public final class GuardClient {
         // Spread across a rounded burst while avoiding steep floor-bound shots.
         // Redistribute directions into the upper sphere rather than clamping
         // a full sphere, which would pile particles into a flat bottom band.
-        double vertical = Math.clamp(0.85D - 1.10D * (index + 0.5D) / count
-            + (random.nextDouble() - 0.5D) * 0.08D, -0.25D, 0.85D);
+        double vertical = Math.clamp(0.82D - 1.14D * (index + 0.5D) / Math.max(1, count)
+            + (random.nextDouble() - 0.5D) * 0.08D, -0.32D, 0.82D);
         double angle = offset + index * (Math.PI * (3.0D - Math.sqrt(5.0D)))
             + (random.nextDouble() - 0.5D) * 0.3D;
         double horizontal = Math.sqrt(1.0D - vertical * vertical);
@@ -422,12 +643,20 @@ public final class GuardClient {
 
     @SubscribeEvent
     public static void cameraShake(ViewportEvent.ComputeCameraAngles event) {
+        updateStaggerVisualState();
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.getConnection() == null || !GuardConfig.SCREEN_SHAKE.get() || GuardConfig.SHAKE_STRENGTH.get() == 0) return;
+        if (mc.player == null || !mc.player.isAlive() || mc.getConnection() == null || !GuardConfig.SCREEN_SHAKE.get() || GuardConfig.SHAKE_STRENGTH.get() == 0) return;
         long age = System.currentTimeMillis() - resultStartMs;
-        if (hitResult == 0 || age < 0 || age >= 320) return;
-        float resultScale = hitResult == 3 ? 1.4F : hitResult == 2 ? 1.0F : 0.55F;
-        float amplitude = resultScale * GuardConfig.SHAKE_STRENGTH.get() / 100.0F * (1.0F - age / 320.0F);
+        long mobAge = System.currentTimeMillis() - mobCounterStart;
+        boolean staggered = staggerActive();
+        boolean incoming = mobCounterStart != 0 && mobAge >= 0 && mobAge < 320;
+        if (!staggered && !incoming && (hitResult == 0 || age < 0 || age >= 320)) return;
+        if (incoming) age = mobAge;
+        float resultScale = incoming ? mobReactionResult == 2 ? 1.4F : 0.55F
+            : hitResult == 3 ? 1.4F : hitResult == 2 ? 1.0F : 0.55F;
+        float pulse = age >= 0 && age < 320 ? resultScale * (1.0F - age / 320.0F) : 0;
+        float amplitude = Math.max(staggered ? 0.16F : 0, pulse) * GuardConfig.SHAKE_STRENGTH.get() / 100.0F;
+        if (staggered && !incoming) age = System.currentTimeMillis();
         event.setRoll(event.getRoll() + (float) Math.sin(age * 0.095D) * 2.5F * amplitude);
         event.setPitch(event.getPitch() + (float) Math.sin(age * 0.135D) * 1.4F * amplitude);
     }
@@ -455,20 +684,25 @@ public final class GuardClient {
     @SubscribeEvent
     public static void tick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
-        if (GuardConfig.pendingUpdates() > 0 && (mc.screen instanceof TitleScreen || mc.screen == null && mc.player != null)) {
-            mc.setScreen(new GuardConfigUpdateScreen(mc.screen));
-            return;
-        }
         if (mc.player == null || mc.getConnection() == null) {
             clearClientPolicy();
+            GuardThirdPerson.clear();
             latestShieldSettings = null;
+            latestMobSettings = null;
+            latestStaggerSettings = null; staggerCellChangeStart = 0; staggerPlayer = null; wasStaggered = false; staggerRecoveryStart = 0; GuardChromatic.clear(); staggerEnabled = false; staggerMaximum = staggerCells = 0; mobCounterStart = 0; mobReactionResult = 0; staggeredUntilTick = Long.MIN_VALUE;
             serverConsumablePriority = true;
             GuardState.setClientCooldownPreventsGuard(true);
+            GuardState.setClientAllowEmptyHand(false);
             if (mc.player != null) GuardState.updateMovement(mc.player, false);
             restoreAttackIndicator();
             wasDown = false;
             wasGuardKeyDown = false;
+            wasAttackDown = false;
+            reportedAttackTick = Long.MIN_VALUE;
+            GuardState.clearClientAttackLock();
+            GuardFeint.clear();
             waitForGuardRelease = false;
+            clearGuardedShieldUse();
             phase = recharge = 0;
             hitResult = 0;
             resultStartMs = 0;
@@ -479,15 +713,19 @@ public final class GuardClient {
             readyGlowQueued = false;
             return;
         }
+        if (ModList.get().isLoaded("simplyswords") && !GuardConfig.SIMPLY_SWORDS_NOTICE_SHOWN.get()) {
+            GuardConfig.SIMPLY_SWORDS_NOTICE_SHOWN.set(true);
+            GuardConfig.CLIENT_SPEC.save();
+            GuardConfig.clearConfigBackups();
+            mc.player.displayClientMessage(Component.translatable("message.mallardguard.simply_swords_bind_ability"), false);
+        }
         if (!policyRequested) {
             policyRequested = true;
             PacketDistributor.sendToServer(new GuardPackets.RequestClientPolicy());
         }
         while (CONFIG_KEY.consumeClick()) {
             if (mc.screen == null) {
-                mc.setScreen(mc.getConnection() == null
-                    ? new GuardConfigScreen(GuardConfig.defaultSnapshot(false), null)
-                    : new GuardConfigLoadingScreen(null));
+                openConfig();
                 break;
             }
         }
@@ -500,10 +738,13 @@ public final class GuardClient {
             mc.gameMode.useItem(mc.player, GuardItemRules.consumable(mc.player.getMainHandItem())
                 ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
         }
+        if (guardKeyDown) GuardFeint.beforeGuard();
         wasGuardKeyDown = guardKeyDown;
-        boolean down = guardKeyDown && !hasConsumable && !waitForGuardRelease;
-        if (!down && phase != 0
-            && mc.player.isUsingItem() && GuardItemRules.shieldLike(mc.player.getUseItem())) mc.player.stopUsingItem();
+        boolean down = guardKeyDown && !hasConsumable && !waitForGuardRelease && !mc.options.keyAttack.isDown() && mc.player.level().getGameTime() >= staggeredUntilTick && GuardState.attackReady(mc.player);
+        if (!down) {
+            if (ownsGuardedShieldUse(mc)) mc.player.stopUsingItem();
+            clearGuardedShieldUse();
+        }
         GuardState.updateMovement(mc.player, down && (phase != 0 || !wasDown && recharge == 0 && GuardState.eligible(mc.player)));
         if (down != wasDown) {
             wasDown = down;
@@ -515,15 +756,27 @@ public final class GuardClient {
                                 && mc.player.getMainHandItem().getUseAnimation() == net.minecraft.world.item.UseAnim.NONE));
             // A shield starts using only after the server accepts the stance in Status.
             // Local prediction could raise it while the server is still recharging.
-            PacketDistributor.sendToServer(new GuardPackets.Input(down, chooseOffhand));
+            PacketDistributor.sendToServer(new GuardPackets.Input(down, chooseOffhand, GuardConfig.HITLAG_FRAMES.get()));
         }
+    }
+
+    private static boolean ownsGuardedShieldUse(Minecraft mc) {
+        return mc.player != null && guardedShieldHand != null && !guardedShieldStack.isEmpty()
+            && mc.player.isUsingItem() && mc.player.getUsedItemHand() == guardedShieldHand
+            && mc.player.getUseItem() == guardedShieldStack
+            && mc.player.getItemInHand(guardedShieldHand) == guardedShieldStack;
+    }
+
+    private static void clearGuardedShieldUse() {
+        guardedShieldStack = ItemStack.EMPTY; guardedShieldHand = null;
     }
 
     /** A rebound Guard key maintains only the shield use that our active stance owns. */
     public static boolean maintainGuardShieldUse() {
         Minecraft mc = Minecraft.getInstance();
-        return mc.screen == null && mc.player != null && GUARD_KEY.isDown() && !waitForGuardRelease
-            && phase != 0 && mc.player.isUsingItem() && GuardItemRules.shieldLike(mc.player.getUseItem());
+        return mc.screen == null && GUARD_KEY.isDown() && !waitForGuardRelease
+            && phase != 0 && ownsGuardedShieldUse(mc)
+            && !mc.player.getCooldowns().isOnCooldown(guardedShieldStack.getItem());
     }
 
     @SubscribeEvent
@@ -531,7 +784,8 @@ public final class GuardClient {
         Minecraft mc = Minecraft.getInstance();
         if (event.isUseItem() && mc.player != null && event.getHand() != null
             && !(serverConsumablePriority && GuardItemRules.consumableInEitherHand(mc.player))
-            && GuardItemRules.shieldLike(mc.player.getItemInHand(event.getHand()))) {
+            && (GuardItemRules.shieldLike(mc.player.getItemInHand(event.getHand()))
+                || GuardItemRules.simplySwordsWeapon(mc.player.getItemInHand(event.getHand())))) {
             event.setCanceled(true);
             // NeoForge swings the canceled hand by default unless explicitly disabled.
             event.setSwingHand(false);
@@ -597,6 +851,12 @@ public final class GuardClient {
         restoreAttackIndicator();
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.options.hideGui) return;
+        updateStaggerVisualState();
+        renderStagger(event.getGuiGraphics());
+        long counterAge = System.currentTimeMillis() - mobCounterStart;
+        if (staggerActive()) renderBlockVignette(event.getGuiGraphics(), 90);
+        if (mobCounterStart != 0 && mobReactionResult == 2 && counterAge >= 0 && counterAge < FLASH_DURATION_MS)
+            renderBlockVignette(event.getGuiGraphics(), counterAge);
         int crosshairX = (event.getGuiGraphics().guiWidth() - 15) / 2;
         int crosshairY = (event.getGuiGraphics().guiHeight() - 15) / 2;
         int shieldSize = 18;
@@ -608,15 +868,36 @@ public final class GuardClient {
         int screenFlashMs = hitResult == 2 ? 260 : 190;
         if (GuardConfig.MEME_FLASH.get() && memeStartMs != 0 && memeIndex >= 0)
             renderMemeFlash(event.getGuiGraphics(), now - memeStartMs);
-        if (GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0 &&
-            (hitResult == 1 || hitResult == 2) && screenFlashStartMs != 0 && flashAge >= 0 && flashAge < screenFlashMs) {
+        if ((GuardConfig.MEME_FLASH.get() && memeStartMs != 0
+            || GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0
+                && (hitResult == 2 || !GuardConfig.PERFECT_ONLY_FLASH.get()))
+            && (hitResult == 1 || hitResult == 2) && screenFlashStartMs != 0 && flashAge >= 0 && flashAge < screenFlashMs) {
             renderScreenFlash(event.getGuiGraphics(), flashAge);
             event.getGuiGraphics().flush();
         }
         if (GuardConfig.SHIELD_EFFECTS.get() && hitResult == 3 && resultStartMs != 0 && resultAge >= 0 && resultAge < FLASH_DURATION_MS) {
             renderBlockVignette(event.getGuiGraphics(), resultAge);
         }
+        if (mobCounterStart != 0 && counterAge >= 0 && counterAge < (mobReactionResult == 2 ? 260 : 190)
+            && GuardConfig.SCREEN_FLASH.get() && GuardConfig.FLASH_STRENGTH.get() > 0
+            && (mobReactionResult == 2 || !GuardConfig.PERFECT_ONLY_FLASH.get())) {
+            renderScreenFlash(event.getGuiGraphics(), counterAge, mobReactionResult == 2, false);
+            event.getGuiGraphics().flush();
+        }
         if (!GuardConfig.HUD.get()) return;
+        if (staggerActive()) {
+            renderStaggerShield(event.getGuiGraphics(), shieldCenterX, shieldCenterY, shieldSize, now);
+            return;
+        }
+        if (staggerRecoveryStart != 0 && now - staggerRecoveryStart < CHARGE_GLOW_MS) {
+            renderStaggerRecovery(event.getGuiGraphics(), shieldCenterX, shieldCenterY, shieldSize, now - staggerRecoveryStart);
+            return;
+        }
+        if (GuardConfig.SHIELD_EFFECTS.get() && mobCounterStart != 0 && counterAge >= 0
+            && counterAge < (mobReactionResult == 2 ? PERFECT_REACTION_MS : REGULAR_REACTION_MS)) {
+            renderMobReaction(event.getGuiGraphics(), shieldCenterX, shieldCenterY, shieldSize, counterAge);
+            return;
+        }
         boolean showingResult = resultVisible();
         // A reaction owns the shield until it finishes. The ready glow starts afterward.
         if (readyGlowQueued && !showingResult && phase == 0 && recharge == 0) {
@@ -682,7 +963,7 @@ public final class GuardClient {
                     float redExpansion = 1.0F + 0.23F * (float) Math.sin(Math.PI * progress);
                     graphics.pose().scale(redExpansion, redExpansion, 1.0F);
                     graphics.pose().translate(-8, -8, 0);
-                    drawShieldMask(graphics, 0xEF3448, 0.64F * (1.0F - progress * progress));
+                    drawRedShield(graphics, 0.94F * (1.0F - progress * progress));
                     graphics.pose().popPose();
                 } else {
                     drawShield(graphics, 0.76F * entrance);
@@ -733,6 +1014,82 @@ public final class GuardClient {
         graphics.pose().popPose();
     }
 
+    private static void renderMobReaction(GuiGraphics graphics, float x, float y, int size, long age) {
+        boolean perfect = mobReactionResult == 2;
+        float progress = age / (float) (perfect ? PERFECT_REACTION_MS : REGULAR_REACTION_MS);
+        float baseScale = size / 16.0F;
+        graphics.pose().pushPose();
+        graphics.pose().translate(x, y, 0);
+        RenderSystem.enableBlend(); RenderSystem.defaultBlendFunc();
+        // The resting layer remains purple; only the reactive artwork and echo are red.
+        graphics.pose().pushPose(); graphics.pose().scale(baseScale, baseScale, 1);
+        graphics.pose().translate(-8, -8, 0); drawShield(graphics, 0.33F); graphics.pose().popPose();
+        if (perfect) {
+            graphics.pose().pushPose();
+            float echoScale = baseScale * (1.12F + 2.28F * progress);
+            graphics.pose().scale(echoScale, echoScale, 1); graphics.pose().translate(-8, -8, 0);
+            drawRedShield(graphics, 0.65F * (1 - progress)); graphics.pose().popPose();
+        }
+        float strength = perfect ? 3.8F : 1.4F;
+        graphics.pose().translate((float) Math.sin(age * 0.15D) * strength * (1 - progress),
+            (float) Math.cos(age * 0.17D) * strength * 0.35F * (1 - progress), 0);
+        float scale = baseScale * (1 + (float) Math.sin(Math.PI * progress) * (perfect ? 1.00F : 0.37F));
+        graphics.pose().scale(scale, scale, 1); graphics.pose().translate(-8, -8, 0);
+        drawRedShield(graphics, 0.88F * (1 - progress * progress));
+        drawShieldMask(graphics, 0xFFFFFF, (perfect ? 0.23F : 0.16F) * (1 - progress));
+        RenderSystem.disableBlend(); graphics.pose().popPose();
+    }
+
+    private static void drawRedShield(GuiGraphics graphics, float opacity) {
+        if (opacity <= 0) return;
+        RenderSystem.setShaderColor(1, 1, 1, opacity);
+        graphics.blit(RED_SHIELD, 0, 0, 0, 0, 16, 16, 16, 16);
+        graphics.flush(); RenderSystem.setShaderColor(1, 1, 1, 1);
+    }
+
+    private static void updateStaggerVisualState() {
+        var player = Minecraft.getInstance().player;
+        if (player != staggerPlayer || player == null || !player.isAlive()) {
+            staggerPlayer = player; wasStaggered = false; staggerRecoveryStart = 0; staggerCellChangeStart = 0;
+            staggeredUntilTick = Long.MIN_VALUE; mobCounterStart = 0; mobReactionResult = 0;
+            GuardChromatic.clear(); GuardHitlag.clear();
+            return;
+        }
+        boolean active = staggerActive();
+        if (wasStaggered && !active && staggerEnabled) staggerRecoveryStart = System.currentTimeMillis();
+        wasStaggered = active;
+    }
+    private static void renderStaggerShield(GuiGraphics graphics, float x, float y, int size, long now) {
+        boolean effects = GuardConfig.SHIELD_EFFECTS.get();
+        graphics.pose().pushPose(); graphics.pose().translate(x, y, 0);
+        RenderSystem.enableBlend(); RenderSystem.defaultBlendFunc();
+        if (effects) {
+            for (int i = 0; i < 2; i++) {
+                float progress = ((now + i * 250) % 500) / 500.0F;
+                graphics.pose().pushPose();
+                float scale = size / 16.0F * (1.04F + 1.25F * progress);
+                graphics.pose().scale(scale, scale, 1); graphics.pose().translate(-8, -8, 0);
+                drawRedShield(graphics, 0.58F * (1 - progress)); graphics.pose().popPose();
+            }
+        }
+        float pulse = effects ? (float) Math.pow(Math.max(0, Math.sin(now * Math.PI / 250.0)), 2) * 0.45F : 0;
+        graphics.pose().translate(effects ? (float) Math.sin(now * 0.09D) * 1.2F : 0,
+            effects ? (float) Math.cos(now * 0.13D) * 0.8F : 0, 0);
+        float scale = size / 16.0F * (1 + pulse);
+        graphics.pose().scale(scale, scale, 1); graphics.pose().translate(-8, -8, 0);
+        drawRedShield(graphics, 0.92F);
+        RenderSystem.disableBlend(); graphics.pose().popPose();
+    }
+    private static void renderStaggerRecovery(GuiGraphics graphics, float x, float y, int size, long age) {
+        float progress = Math.clamp(age / (float) CHARGE_GLOW_MS, 0, 1);
+        graphics.pose().pushPose(); graphics.pose().translate(x, y - (float) Math.sin(Math.PI * progress) * 2, 0);
+        graphics.pose().scale(size / 16.0F, size / 16.0F, 1); graphics.pose().translate(-8, -8, 0);
+        RenderSystem.enableBlend(); RenderSystem.defaultBlendFunc();
+        drawRedShield(graphics, 0.92F * (1 - progress));
+        drawShieldOutline(graphics, Math.min(1, progress / 0.15F) * (1 - progress));
+        RenderSystem.disableBlend(); graphics.pose().popPose();
+    }
+
     private static void drawShield(GuiGraphics graphics, float opacity) {
         drawShieldRegion(graphics, 0, 16, opacity);
     }
@@ -755,8 +1112,11 @@ public final class GuardClient {
         graphics.pose().translate(x, y, 0);
         graphics.pose().scale(scale, scale, 1.0F);
         graphics.pose().translate(-8, -8, 0);
-        drawShield(graphics, opacity);
-        drawShieldMask(graphics, 0xFFFFFF, opacity * 0.35F);
+        if (hitResult == 3 && guardBreakHitResult) drawRedShield(graphics, opacity);
+        else {
+            drawShield(graphics, opacity);
+            drawShieldMask(graphics, 0xFFFFFF, opacity * 0.35F);
+        }
         graphics.pose().popPose();
     }
 
@@ -815,9 +1175,14 @@ public final class GuardClient {
     }
 
     private static void renderScreenFlash(net.minecraft.client.gui.GuiGraphics graphics, long age) {
-        float progress = age / (hitResult == 2 ? 260.0F : 190.0F);
-        float intensity = GuardConfig.FLASH_STRENGTH.get() / 100.0F * (hitResult == 2 ? 1.0F : 0.82F);
-        int alpha = Math.round(255.0F * 0.85F * (1.0F - progress) * intensity);
+        renderScreenFlash(graphics, age, hitResult == 2, GuardConfig.MEME_FLASH.get() && memeStartMs != 0);
+    }
+
+    private static void renderScreenFlash(GuiGraphics graphics, long age, boolean perfect, boolean meme) {
+        float progress = age / (perfect ? 260.0F : 190.0F);
+        float intensity = meme ? 1.0F : GuardConfig.FLASH_STRENGTH.get() / 100.0F * (perfect ? 1.0F : 0.82F);
+        float peak = meme ? 1.0F : 0.85F;
+        int alpha = Math.round(255.0F * peak * (1.0F - progress) * intensity);
         graphics.fill(0, 0, graphics.guiWidth(), graphics.guiHeight(), alpha << 24 | 0xFFFFFF);
     }
 

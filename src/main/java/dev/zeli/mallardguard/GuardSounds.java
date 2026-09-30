@@ -25,6 +25,8 @@ public final class GuardSounds {
     public static final List<DeferredHolder<SoundEvent, SoundEvent>> SHIELD_PERFECT_BOOST = boosted("perfect_shield", 5);
     public static final List<DeferredHolder<SoundEvent, SoundEvent>> FALL_PARRY = List.of(register("fall_parry"));
     public static final List<DeferredHolder<SoundEvent, SoundEvent>> FALL_PARRY_BOOST = List.of(register("fall_parry_boost"));
+    public static final List<DeferredHolder<SoundEvent, SoundEvent>> FALL_REGULAR = List.of(register("fall_regular"));
+    public static final List<DeferredHolder<SoundEvent, SoundEvent>> FALL_REGULAR_BOOST = List.of(register("fall_regular_boost"));
     public static final List<DeferredHolder<SoundEvent, SoundEvent>> BLOCK = List.of(
         register("block_1"), register("block_2"), register("block_3"), register("block_4"), register("block_5"));
     public static final List<DeferredHolder<SoundEvent, SoundEvent>> BLOCK_BOOST = boosted("block", 5);

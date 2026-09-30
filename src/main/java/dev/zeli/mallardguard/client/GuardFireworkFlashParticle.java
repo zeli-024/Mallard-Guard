@@ -25,7 +25,7 @@ public final class GuardFireworkFlashParticle extends TextureSheetParticle {
 
     private GuardFireworkFlashParticle(ClientLevel level, double x, double y, double z, SpriteSet sprites, boolean perfect) {
         super(level, x, y, z);
-        lifetime = 4;
+        lifetime = (perfect ? GuardConfig.PERFECT_ORB_LIFETIME : GuardConfig.REGULAR_ORB_LIFETIME).get();
         hasPhysics = false;
         size = (perfect ? GuardConfig.PERFECT_ORB_SIZE.get() : GuardConfig.REGULAR_ORB_SIZE.get()) / 100.0F;
         peakAlpha = (perfect ? GuardConfig.PERFECT_ORB_OPACITY.get() : GuardConfig.REGULAR_ORB_OPACITY.get()) / 100.0F;

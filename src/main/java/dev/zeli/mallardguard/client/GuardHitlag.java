@@ -16,88 +16,135 @@ import org.lwjgl.opengl.GL30;
 import java.util.ArrayDeque;
 import java.util.Queue;
 
-/** Holds one captured frame for a 60 FPS equivalent interval; world ticks continue. */
+/** Freeze a captured frame, then hold one freshly filtered impact scene. */
 @EventBusSubscriber(modid = MallardGuard.ID, value = Dist.CLIENT)
 public final class GuardHitlag {
     private static final long NANOS_PER_FRAME = 1_000_000_000L / 60L;
-    private static final Queue<Runnable> afterFreeze = new ArrayDeque<>();
-    private static TextureTarget frozen;
-    private static boolean capturePending;
-    private static long frozenUntilNanos;
+    private static final Queue<Runnable> afterFeedback = new ArrayDeque<>();
+    private static TextureTarget captured;
+    private static boolean freezeCapturePending, impactCapturePending;
+    private static long frozenUntilNanos, impactStartNanos;
+    private static boolean impactEnabled, impactWasDrawn, inverted;
+    private static long impactDurationNanos;
 
     private GuardHitlag() {}
 
-    public static void trigger(Runnable feedback) {
+    public static void trigger(boolean enabledForResult, boolean perfect, Runnable feedback) {
+        inverted = false;
         Minecraft mc = Minecraft.getInstance();
-        if (GuardConfig.HITLAG_FRAMES.get() == 0 || mc.player == null || mc.level == null || mc.screen != null) {
+        boolean freeze = enabledForResult && GuardConfig.HITLAG_FRAMES.get() > 0;
+        boolean impact = GuardConfig.IMPACT_FRAMES.get() > 0
+            && (perfect || !GuardConfig.IMPACT_PERFECT_ONLY.get());
+        if ((!freeze && !impact) || mc.player == null || mc.level == null || mc.screen != null) {
             feedback.run();
             return;
         }
-        afterFreeze.add(feedback);
-        capturePending = true;
+        afterFeedback.add(feedback);
+        impactEnabled = impact;
+        impactWasDrawn = false;
+        impactDurationNanos = Math.max(1, GuardConfig.HITLAG_FRAMES.get()) * NANOS_PER_FRAME;
+        if (freeze) freezeCapturePending = true;
+        else impactCapturePending = true;
     }
 
-    /** Play a defender's sound when the active freeze ends; never starts a new freeze. */
-    public static void afterFreeze(Runnable sound) {
-        if (capturePending || frozenUntilNanos != 0) afterFreeze.add(sound);
-        else sound.run();
+    public static void triggerMobCounter(Runnable feedback) {
+        trigger(true, true, feedback);
+        inverted = true;
+    }
+
+    /** Queue local effects until the freeze and impact image end. */
+    public static void afterFreeze(Runnable action) {
+        if (freezeCapturePending || frozenUntilNanos != 0 || impactCapturePending || impactStartNanos != 0)
+            afterFeedback.add(action);
+        else action.run();
+    }
+
+    public static void clear() {
+        freezeCapturePending = impactCapturePending = impactEnabled = impactWasDrawn = false;
+        frozenUntilNanos = impactStartNanos = 0; afterFeedback.clear();
+        if (captured != null) { captured.destroyBuffers(); captured = null; }
     }
 
     private static void finish() {
-        while (!afterFreeze.isEmpty()) afterFreeze.remove().run();
+        while (!afterFeedback.isEmpty()) afterFeedback.remove().run();
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void render(RenderFrameEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || mc.player == null || mc.screen != null || GuardConfig.HITLAG_FRAMES.get() == 0) {
-            capturePending = false;
-            frozenUntilNanos = 0;
+        if (mc.player != null && !mc.player.isAlive()) { clear(); return; }
+        if (mc.level == null || mc.player == null || mc.screen != null) {
+            freezeCapturePending = impactCapturePending = false;
+            frozenUntilNanos = impactStartNanos = 0;
             if (mc.player != null && mc.level != null) finish();
-            else afterFreeze.clear();
-            if (frozen != null && (mc.level == null || mc.player == null)) {
-                frozen.destroyBuffers();
-                frozen = null;
+            else afterFeedback.clear();
+            if (captured != null && (mc.level == null || mc.player == null)) {
+                captured.destroyBuffers();
+                captured = null;
             }
             return;
         }
-        if (!capturePending && frozenUntilNanos == 0) {
-            finish();
-            return;
-        }
-        if (!capturePending && System.nanoTime() >= frozenUntilNanos) {
-            frozenUntilNanos = 0;
+        if (!freezeCapturePending && frozenUntilNanos == 0 && !impactCapturePending && impactStartNanos == 0) {
             finish();
             return;
         }
 
-        RenderTarget frame = mc.getMainRenderTarget();
-        int width = frame.width, height = frame.height;
+        long now = System.nanoTime();
+        if (frozenUntilNanos != 0 && now >= frozenUntilNanos) {
+            frozenUntilNanos = 0;
+            if (impactEnabled) impactCapturePending = true;
+            else { finish(); return; }
+        }
+        if (impactStartNanos != 0 && now - impactStartNanos >= impactDurationNanos && impactWasDrawn) {
+            impactStartNanos = 0;
+            finish();
+            return;
+        }
+
+        RenderTarget screen = mc.getMainRenderTarget();
+        int width = screen.width, height = screen.height;
         if (width <= 0 || height <= 0) return;
-        if (frozen == null || frozen.width != width || frozen.height != height) {
-            if (frozen != null) frozen.destroyBuffers();
-            frozen = new TextureTarget(width, height, false, false);
-            frozenUntilNanos = 0;
+        if (captured == null || captured.width != width || captured.height != height) {
+            if (captured != null) captured.destroyBuffers();
+            captured = new TextureTarget(width, height, false, false);
+            frozenUntilNanos = impactStartNanos = 0;
         }
+        if (freezeCapturePending) {
+            copy(screen, captured);
+            freezeCapturePending = false;
+            frozenUntilNanos = System.nanoTime() + GuardConfig.HITLAG_FRAMES.get() * NANOS_PER_FRAME;
+        }
+        if (frozenUntilNanos != 0) {
+            copy(captured, screen);
+            return;
+        }
+        if (impactCapturePending) {
+            // Hold one NEW scene after hitlag and apply one still grayscale treatment.
+            copy(screen, captured);
+            impactCapturePending = false;
+            impactStartNanos = System.nanoTime();
+        }
+        if (impactStartNanos != 0) {
+            if (!GuardImpactFrame.draw(captured, screen, inverted)) {
+                impactStartNanos = 0;
+                finish();
+            } else impactWasDrawn = true;
+        }
+    }
 
-        int read = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
-        int draw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+    static void copy(RenderTarget source, RenderTarget target) {
+        int previousRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+        int previousDraw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
         boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
         if (scissor) GL11.glDisable(GL11.GL_SCISSOR_TEST);
         try {
-            if (capturePending) {
-                GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, frame.frameBufferId);
-                GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, frozen.frameBufferId);
-                GL30.glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
-                capturePending = false;
-                frozenUntilNanos = System.nanoTime() + GuardConfig.HITLAG_FRAMES.get() * NANOS_PER_FRAME;
-            }
-            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, frozen.frameBufferId);
-            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, frame.frameBufferId);
-            GL30.glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
+            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, source.frameBufferId);
+            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, target.frameBufferId);
+            GL30.glBlitFramebuffer(0, 0, source.width, source.height,
+                0, 0, target.width, target.height, GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
         } finally {
-            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, read);
-            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, draw);
+            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previousRead);
+            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, previousDraw);
             if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST);
         }
     }

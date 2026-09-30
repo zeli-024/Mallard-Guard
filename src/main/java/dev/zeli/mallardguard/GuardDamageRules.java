@@ -30,6 +30,8 @@ public final class GuardDamageRules {
     private static final int MAX_RULE_LENGTH = 131072, MAX_HITS = 10;
     private static final Map<UUID, ArrayDeque<String>> HITS = new java.util.HashMap<>();
 
+    private static String cachedDefaultText;
+    private static Map<String, Boolean> cachedDefaultRules = Map.of();
     private static String cachedText;
     private static Map<String, Boolean> cachedRules = Map.of();
     private static String cachedProjectileText;
@@ -43,7 +45,9 @@ public final class GuardDamageRules {
 
     public static boolean builtin(String id) { return BUILTINS.contains(id); }
     public static boolean defaultAllowed(String id) {
-        return !builtin(id) || id.equals("minecraft:fall") || id.equals("minecraft:fly_into_wall");
+        String defaults = GuardConfig.DAMAGE_RULES.getDefault();
+        if (!defaults.equals(cachedDefaultText)) { cachedDefaultRules = parseRules(defaults); cachedDefaultText = defaults; }
+        return cachedDefaultRules.getOrDefault(id, !builtin(id) || id.equals("minecraft:fall") || id.equals("minecraft:fly_into_wall"));
     }
 
     public static boolean validId(String id) {
@@ -145,6 +149,7 @@ public final class GuardDamageRules {
                 if (updated.length() <= MAX_RULE_LENGTH) {
                     GuardConfig.OBSERVED_PROJECTILE_SOURCES.set(updated.toString());
                     GuardConfig.SERVER_SPEC.save();
+        GuardConfig.clearConfigBackups();
                 }
             }
         }

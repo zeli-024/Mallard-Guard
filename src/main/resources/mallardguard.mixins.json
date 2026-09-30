@@ -4,6 +4,16 @@
   "compatibilityLevel": "JAVA_21",
   "package": "dev.zeli.mallardguard.mixin",
   "mixins": [],
-  "client": ["client.ItemInHandRendererAccessor", "client.MinecraftShieldReleaseMixin"],
-  "injectors": {"defaultRequire": 1}
+  "client": [
+    "client.ItemInHandRendererAccessor",
+    "client.MinecraftShieldReleaseMixin",
+    "client.LivingEntityRendererMixin",
+    "client.EmfGuardPoseMixin",
+    "client.BetterCombatFeintMixin",
+    "client.LivingEntityAttackTickerAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "plugin": "dev.zeli.mallardguard.mixin.GuardMixinPlugin"
 }

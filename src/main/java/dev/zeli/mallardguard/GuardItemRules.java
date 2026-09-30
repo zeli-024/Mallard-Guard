@@ -2,9 +2,13 @@ package dev.zeli.mallardguard;
 
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.UseAnim;
@@ -14,10 +18,26 @@ public final class GuardItemRules {
     private GuardItemRules() {}
 
     public static boolean shieldLike(ItemStack stack) {
-        return !stack.isEmpty() && (stack.is(Items.SHIELD) || stack.getUseAnimation() == UseAnim.BLOCK
+        return !stack.isEmpty() && (stack.is(Items.SHIELD)
             || stack.is(TagKey.create(Registries.ITEM, ResourceLocation.fromNamespaceAndPath("c", "tools/shields")))
             || stack.is(TagKey.create(Registries.ITEM, ResourceLocation.fromNamespaceAndPath("forge", "shields")))
-            || matches(stack, GuardConfig.SHIELD_ITEMS.get()));
+            || matches(stack, GuardConfig.SHIELD_ITEMS.get())
+            || stack.getUseAnimation() == UseAnim.BLOCK && !hasAttackDamage(stack));
+    }
+
+    public static boolean hasAttackDamage(ItemStack stack) {
+        ItemAttributeModifiers modifiers = stack.get(DataComponents.ATTRIBUTE_MODIFIERS);
+        if (modifiers == null) return false;
+        for (ItemAttributeModifiers.Entry entry : modifiers.modifiers()) {
+            if (entry.attribute().is(Attributes.ATTACK_DAMAGE) && entry.modifier().amount() > 0
+                && (entry.slot().test(EquipmentSlot.MAINHAND) || entry.slot().test(EquipmentSlot.OFFHAND))) return true;
+        }
+        return false;
+    }
+
+    public static boolean simplySwordsWeapon(ItemStack stack) {
+        return !stack.isEmpty() && !shieldLike(stack) && hasAttackDamage(stack)
+            && BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace().equals("simplyswords");
     }
 
     public static boolean consumableInEitherHand(Player player) {
