@@ -17,28 +17,28 @@ public abstract class PunchyGuardPoseMixin {
         PunchyGuardCompat.applyOwnedArmOffsets(this,parts,partialTick);
     }
 
-    @Inject(method="isDualHandedPoseActive",at=@At("HEAD"),cancellable=true,require=1,remap=false)
+    @Inject(method="isDualHandedPoseActive(F)Z",at=@At("HEAD"),cancellable=true,require=1,remap=false)
     private void mallardguard$bothHands(float partialTick,CallbackInfoReturnable<Boolean> callback){
         if(PunchyGuardCompat.ownsHandVisibility(this))callback.setReturnValue(true);
     }
 
-    @Inject(method = "captureCurrentArmSamplesInto", at = @At("RETURN"), require = 0, remap = false)
+    @Inject(method = "captureCurrentArmSamplesInto(Ljava/util/Map;Lnet/minecraft/world/entity/HumanoidArm;)V", at = @At("RETURN"), require = 0, remap = false)
     private void mallardguard$transitionSource(java.util.Map<String, Object> samples, net.minecraft.world.entity.HumanoidArm arm, CallbackInfo callback) {
         PunchyGuardCompat.preserveVisibleTransition(this, samples, arm);
     }
 
-    @Inject(method = "shouldForceBlendInFromVisibleSource", at = @At("HEAD"), cancellable = true, require = 0, remap = false)
+    @Inject(method = "shouldForceBlendInFromVisibleSource()Z", at = @At("HEAD"), cancellable = true, require = 0, remap = false)
     private void mallardguard$visibleStart(CallbackInfoReturnable<Boolean> callback) {
         if (PunchyGuardCompat.captureVisibleStart(this)) callback.setReturnValue(true);
     }
 
-    @Inject(method = "applyBlendInEasing", at = @At("HEAD"), cancellable = true, require = 1, remap = false)
+    @Inject(method = "applyBlendInEasing(F)F", at = @At("HEAD"), cancellable = true, require = 1, remap = false)
     private void mallardguard$easing(float progress, CallbackInfoReturnable<Float> callback) {
         Float value = PunchyGuardCompat.transitionEasing(this, progress);
         if (value != null) callback.setReturnValue(value);
     }
 
-    @Inject(method="getBlendOutProgress",at=@At("RETURN"),cancellable=true,require=1,remap=false)
+    @Inject(method="getBlendOutProgress(F)F",at=@At("RETURN"),cancellable=true,require=1,remap=false)
     private void mallardguard$returnCurve(float partialTick,CallbackInfoReturnable<Float> callback){
         Float value=PunchyGuardCompat.returnEasing(this,partialTick);
         if(value!=null)callback.setReturnValue(value);

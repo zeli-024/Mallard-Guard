@@ -401,13 +401,13 @@ public final class GuardMobState {
             || !(mob instanceof Zombie || mob instanceof AbstractSkeleton || mob instanceof net.minecraft.world.entity.monster.Vindicator || mob instanceof net.minecraft.world.entity.monster.Pillager)
             || mob.getPersistentData().getBoolean(EQUIPMENT_ROLLED)) return;
         mob.getPersistentData().putBoolean(EQUIPMENT_ROLLED, true);
+        if (mob.getRandom().nextInt(100) >= GuardConfig.MOB_GEAR_CHANCE.get()) return;
         if (mob instanceof Zombie || mob instanceof AbstractSkeleton) {
             if (mob.getItemBySlot(EquipmentSlot.CHEST).isEmpty()) { mob.setItemSlot(EquipmentSlot.CHEST, new ItemStack(Items.IRON_CHESTPLATE)); mob.setDropChance(EquipmentSlot.CHEST, 0); }
             if (mob.getItemBySlot(EquipmentSlot.HEAD).isEmpty()) { mob.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET)); mob.setDropChance(EquipmentSlot.HEAD, 0); }
         }
         var held = mob.getMainHandItem();
         if (!mob.getOffhandItem().isEmpty() || !held.isEmpty() && !held.is(Items.BOW) && !held.is(Items.CROSSBOW) && !held.is(Items.IRON_AXE)) return;
-        if (mob.getRandom().nextInt(100) >= GuardConfig.MOB_GEAR_CHANCE.get()) return;
         if (mob instanceof net.minecraft.world.entity.monster.Pillager) { mob.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(Items.CROSSBOW)); return; }
         boolean skeleton = mob instanceof AbstractSkeleton;
         int weapon = mob.getRandom().nextInt(skeleton ? 4 : 3);

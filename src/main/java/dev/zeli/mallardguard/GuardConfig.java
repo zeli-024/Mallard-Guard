@@ -300,7 +300,7 @@ public final class GuardConfig {
             .define("damageRules", "minecraft:generic_kill=1,minecraft:arrow=1,minecraft:lava=0,minecraft:hot_floor=0", value -> value instanceof String rules && GuardDamageRules.validRules(rules));
         OBSERVED_PROJECTILE_SOURCES = server.comment("Automatically learned projectile entity ID to damage type ID associations. Updated after players are hit; used to honor modded projectile source rules at impact.")
             .define("observedProjectileSources", "", value -> value instanceof String mapping && GuardDamageRules.validProjectileSources(mapping));
-        BLOCK = server.comment("Keep guarding after the parry window while the guard key is held.").define("block", true);
+        BLOCK = server.comment("Keep weapons and shields guarding after the parry window while the guard key is held. Off also lowers shields after successful parries.").define("block", true);
         TOOL_MAX_BLOCKS = GuardSettingRanges.integer(server.comment("Successful weapon or empty-hand blocks before guard breaks; 0 allows unlimited blocks. Guard break delays the next guard but does not disable attacking with the item."), "toolMaxBlocks", 3, 0, 5);
         server.pop();
         server.push("timing");
@@ -402,7 +402,7 @@ public final class GuardConfig {
         MOB_APPROACH_DISTANCE = GuardSettingRanges.integer(server.comment("Maximum distance for surprise approach guarding. Each encounter chooses a trigger distance between 1 block and this maximum. Default: 2 blocks."), "approachDistance", 2, 1, 5);
         MOB_APPROACH_SECONDS = GuardSettingRanges.integer(server.comment("Maximum approach stance duration. Each attempt lasts randomly from 1 second through this maximum. Parry windows repeat with vulnerable gaps if needed. Default: 2 seconds."), "approachMaxSeconds", 2, 1, 10);
         MOB_RUSH_CHANCE = GuardSettingRanges.integer(server.comment("Chance to immediately rush the target after a successful mob parry, instead of lowering guard or raising one follow-up stance. Default: 70%."), "rushChance", 70, 0, 100);
-        MOB_GEAR_CHANCE = GuardSettingRanges.integer(server.comment("Chance to assign a fresh vanilla zombie, skeleton, pillager, or vindicator a balanced loadout. Existing modded gear is preserved. Tool tiers are stone, iron, gold, and rarely diamond. Melee loadouts may include a shield; ranged loadouts never do. Default: 50%."), "gearChance", 50, 0, 100);
+        MOB_GEAR_CHANCE = GuardSettingRanges.integer(server.comment("Chance to assign a fresh vanilla zombie, skeleton, pillager, or vindicator a balanced loadout, including generated armor. 0 disables all generated gear; 100 always passes the roll. Existing modded gear is preserved. Tool tiers are stone, iron, gold, and rarely diamond. Melee loadouts may include a shield; ranged loadouts never do. Default: 50%."), "gearChance", 50, 0, 100);
         server.pop();
 
 
@@ -456,11 +456,11 @@ public final class GuardConfig {
         client.push("animation");
         SIMPLY_SWORDS_NOTICE_SHOWN = client.comment("Whether the Simply Swords keybind notice has already appeared in chat on this client.").define("simplySwordsNoticeShown", false);
         THIRD_PERSON_ANIMATION = client.comment("Show the simple blocking pose on yourself and other guarding players and humanoid mobs. Off hides this pose for everyone on your client; server guard mechanics do not change.").define("thirdPersonGuardPose", GuardClientSettings.initialFlag(49));
-        FIRST_PERSON_ANIMATION = client.comment("Use Mallard Guard's first-person weapon pose. Disable when another mod animates your hands; shields always use vanilla animation.").define("firstPersonGuardPose", GuardClientSettings.initialFlag(11));
+        FIRST_PERSON_ANIMATION = client.comment("Simple first-person weapon pose preference when Punchy Compatibility is disabled. The simple pose is automatically enabled when Punchy is absent or its enabled integration is unavailable. Compatible Punchy animations take priority without changing this preference; shields use their own animation.").define("firstPersonGuardPose", GuardClientSettings.initialFlag(11));
         client.pop();
         ModConfigSpec.Builder punchy = new ModConfigSpec.Builder();
         PUNCHY_REVISION=punchy.comment("Internal config schema revision.").defineInRange("configRevision",CONFIG_REVISION,0,Integer.MAX_VALUE);
-        PUNCHY_COMPAT = punchy.comment("Render eligible guard items through Punchy 2.8b or 2.8d. While Punchy is installed and compatibility enabled, the simple first-person guard animation is disabled. Default: true.").define("enabled", true);
+        PUNCHY_COMPAT = punchy.comment("Render eligible guard items through Punchy when its required animation API is available, including compatible newer versions. The simple first-person pose is used when Punchy is absent or integration fails. Saved animation preferences are preserved. Default: true.").define("enabled", true);
         PUNCHY_RELEASE_DELAY = GuardSettingRanges.integer(punchy.comment("Extra hold after client hitlag finishes. Releases without hitlag have no extra delay. Applies to every preset. 0 removes the delay. Default: 50 ms."), "releaseDelayMillis", 50, 0, 1000);
         java.util.List<ModConfigSpec.ConfigValue<String>> poses = new java.util.ArrayList<>();
         for (int i = 0; i < GuardPoseSettings.COUNT; i++) {

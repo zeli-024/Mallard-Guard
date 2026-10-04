@@ -13,13 +13,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Pseudo
 @Mixin(targets="punchy.client.PunchyClient",remap=false)
 public abstract class PunchyGuardVisibilityMixin {
-    @Inject(method="shouldSuppressOffhandRender",at=@At("HEAD"),cancellable=true,require=1,remap=false)
+    @Inject(method="shouldSuppressOffhandRender(Lnet/minecraft/world/entity/player/Player;)Z",at=@At("HEAD"),cancellable=true,require=1,remap=false)
     private static void mallardguard$visible(Player player,CallbackInfoReturnable<Boolean> callback){
         if(player!=net.minecraft.client.Minecraft.getInstance().player)return;
         if(PunchyGuardCompat.ownsHandVisibility())callback.setReturnValue(false);
         else if(PunchyGuardCompat.hideLoweredOffhand())callback.setReturnValue(true);
     }
-    @Inject(method="shouldLowerOffhand",at=@At("HEAD"),cancellable=true,require=1,remap=false)
+    @Inject(method="shouldLowerOffhand(Lnet/minecraft/client/player/LocalPlayer;)Z",at=@At("HEAD"),cancellable=true,require=1,remap=false)
     private static void mallardguard$lower(LocalPlayer player,CallbackInfoReturnable<Boolean> callback){
         if(player==net.minecraft.client.Minecraft.getInstance().player&&PunchyGuardCompat.ownsHandVisibility())callback.setReturnValue(false);
     }

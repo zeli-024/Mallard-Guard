@@ -22,12 +22,18 @@ import net.neoforged.neoforge.client.event.RenderHandEvent;
 public final class GuardAnimationHandler {
     private GuardAnimationHandler() {}
 
+    public static boolean simplePoseEnabled() {
+        if (!PunchyGuardCompat.installed()) return true;
+        if (GuardConfig.PUNCHY_COMPAT.get()) return !PunchyGuardCompat.supportedVersion();
+        return GuardConfig.FIRST_PERSON_ANIMATION.get();
+    }
+
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void renderFirstPerson(RenderHandEvent event) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
-        if (player == null || !GuardConfig.FIRST_PERSON_ANIMATION.get() || event.getHand() != GuardClient.guardHand(player)) return;
-        if (PunchyGuardCompat.installed() && GuardConfig.PUNCHY_COMPAT.get() || PunchyGuardCompat.shouldTakeOver()) return;
+        if (player == null || !simplePoseEnabled() || event.getHand() != GuardClient.guardHand(player)) return;
+        if (PunchyGuardCompat.shouldTakeOver()) return;
         ItemStack stack = event.getItemStack();
         // Let shield-like items keep their own first-person animation in every phase.
         if (stack.isEmpty() || GuardClient.shieldLike(stack) || !GuardClient.isCurrentGuardHand(stack)) return;

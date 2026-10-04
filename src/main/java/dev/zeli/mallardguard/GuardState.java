@@ -190,6 +190,9 @@ public final class GuardState {
         GuardRetaliation.tick(player);
         GuardState state = STATES.get(player.getUUID());
         if (state == null) return;
+        if (state.held && (state.phase == 3 || state.phase == 4) && !GuardConfig.BLOCK.get()) {
+            input(player, false, false);
+        }
         if (state.recharge > 0 && state.phase != 3 && state.phase != 4) state.recharge--;
         if (state.held) {
             if (state.breakPending) applyGuardBreak(player, state);
@@ -205,13 +208,17 @@ public final class GuardState {
                 state.elapsed++;
                 boolean shield = GuardItemRules.shieldLike(state.heldItem);
                 if (state.elapsed >= (shield ? GuardConfig.SHIELD_PARRY_TICKS : GuardConfig.PARRY_TICKS).get()) {
-                    state.phase = shield ? 4 : GuardConfig.BLOCK.get() ? 3 : 0;
+                    state.phase = GuardConfig.BLOCK.get() ? shield ? 4 : 3 : 0;
                     if (state.phase == 4) {
                         // Keep the existing use action so the shield pose never restarts.
                         state.recharge = GuardConfig.SHIELD_RECHARGE_TICKS.get();
                         state.rechargeDuration = state.recharge;
                     } else if (state.phase == 3) { state.recharge = GuardConfig.RECHARGE_TICKS.get(); state.rechargeDuration = state.recharge; }
-                    else state.held = false;
+                    else {
+                        state.held = false;
+                        if (shield && player.isUsingItem() && player.getUsedItemHand() == state.guardHand)
+                            player.stopUsingItem();
+                    }
                 } else if (state.elapsed >= (shield ? GuardConfig.SHIELD_PERFECT_TICKS : GuardConfig.PERFECT_TICKS).get()) {
                     state.phase = 2;
                 }
@@ -316,10 +323,13 @@ public final class GuardState {
             state.safetyThroughTick = GuardConfig.FOLLOW_UP_TICKS.get() == 0 ? -1 : player.level().getGameTime() + GuardConfig.FOLLOW_UP_TICKS.get();
             boolean shield = GuardItemRules.shieldLike(state.heldItem);
             if (shield) state.safetyThroughTick = -1;
-            state.held = shield;
-            state.phase = shield ? 4 : 0;
+            boolean keepBlocking = shield && GuardConfig.BLOCK.get();
+            state.held = keepBlocking;
+            state.phase = keepBlocking ? 4 : 0;
             state.elapsed = 0;
-            updateMovement(player, shield);
+            if (shield && !keepBlocking && player.isUsingItem() && player.getUsedItemHand() == state.guardHand)
+                player.stopUsingItem();
+            updateMovement(player, keepBlocking);
         }
         sync(player, state);
         return result;
@@ -338,7 +348,7 @@ public final class GuardState {
 
     public static boolean shieldGuard(ServerPlayer player) {
         GuardState state = STATES.get(player.getUUID());
-        return state != null && state.held && GuardItemRules.shieldLike(state.heldItem);
+        return state != null && GuardItemRules.shieldLike(state.heldItem);
     }
 
     public static void shieldBlocked(ServerPlayer player) {
@@ -390,6 +400,7 @@ public final class GuardState {
     }
 
     private static boolean canBlock(SourceKind kind) {
+        if (!GuardConfig.BLOCK.get()) return false;
         return switch (kind) {
             case MELEE -> true;
             case FALL -> false;

@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Pseudo
 @Mixin(targets = "punchy.client.animation.PunchyAnimationManager", remap = false)
 public abstract class PunchyGuardReloadMixin {
-    @Inject(method = "loadAnimations", at = @At("RETURN"), require = 0, remap = false)
+    @Inject(method = "loadAnimations(Lnet/minecraft/server/packs/resources/ResourceManager;)V", at = @At("RETURN"), require = 0, remap = false)
     private static void mallardguard$reload(ResourceManager resources, CallbackInfo callback) {
         PunchyGuardCompat.resourcesReloaded();
     }

@@ -552,7 +552,6 @@ public final class GuardClient {
             return;
         }
         sessionActive = true;
-        if (PunchyGuardCompat.installed() && GuardConfig.PUNCHY_COMPAT.get() && GuardConfig.FIRST_PERSON_ANIMATION.get()) { GuardConfig.FIRST_PERSON_ANIMATION.set(false); saveClientConfig(); }
         if (ModList.get().isLoaded("simplyswords") && !GuardConfig.SIMPLY_SWORDS_NOTICE_SHOWN.get()) {
             GuardConfig.SIMPLY_SWORDS_NOTICE_SHOWN.set(true);
             GuardConfig.CLIENT_SPEC.save();

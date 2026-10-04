@@ -24,6 +24,12 @@ import net.minecraft.world.entity.projectile.AbstractArrow;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.event.entity.ProjectileImpactEvent;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.entity.living.LivingEntityUseItemEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.UseAnim;
 import net.neoforged.neoforge.event.tick.EntityTickEvent;
 import net.minecraft.world.phys.EntityHitResult;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -110,8 +116,10 @@ public final class GuardCombatEffects {
             if (toTarget.lengthSqr() < 1.0E-6D || toTarget.lengthSqr() > reach * reach ||
                 player.getLookAngle().dot(toTarget.normalize()) < minDot) continue;
             pushLikeHit(player, target, GuardConfig.SHIELD_PUSHBACK_PERCENT.get());
-            if (GuardConfig.SHIELD_STUN_TICKS.get() > 0 && (!boss(target) || allowedBoss(target)))
+            if (GuardConfig.SHIELD_STUN_TICKS.get() > 0 && (!boss(target) || allowedBoss(target))) {
                 STUNNED.put(target, GuardConfig.SHIELD_STUN_TICKS.get());
+                stopRangedUse(target);
+            }
             float damage = incomingDamage * GuardConfig.SHIELD_RETALIATION_PERCENT.get() / 100.0F;
             if (damage > 0) GuardRetaliation.damage(player, target, damage);
         }
@@ -159,11 +167,40 @@ public final class GuardCombatEffects {
         return entity instanceof LivingEntity living && STUNNED.containsKey(living);
     }
 
+    private static boolean rangedUse(ItemStack stack) {
+        UseAnim animation = stack.getUseAnimation();
+        return animation == UseAnim.BOW || animation == UseAnim.CROSSBOW || animation == UseAnim.SPEAR;
+    }
+
+    private static void stopRangedUse(LivingEntity entity) {
+        if (entity.isUsingItem() && rangedUse(entity.getUseItem())) entity.stopUsingItem();
+    }
+
+    public static void startRangedUse(LivingEntityUseItemEvent.Start event) {
+        if (!event.getEntity().level().isClientSide && stunned(event.getEntity()) && rangedUse(event.getItem()))
+            event.setCanceled(true);
+    }
+
+    public static void rangedItemInteraction(PlayerInteractEvent.RightClickItem event) {
+        if (!event.getEntity().level().isClientSide && stunned(event.getEntity())
+            && rangedUse(event.getItemStack())) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.FAIL);
+        }
+    }
+
+    public static void projectileSpawn(EntityJoinLevelEvent event) {
+        if (!event.getLevel().isClientSide && !event.loadedFromDisk()
+            && event.getEntity() instanceof Projectile projectile && stunned(projectile.getOwner()))
+            event.setCanceled(true);
+    }
+
     public static void tickStun(EntityTickEvent.Post event) {
         if (STUNNED.isEmpty()) return;
         if (!(event.getEntity() instanceof LivingEntity entity) || entity.level().isClientSide()) return;
         Integer ticks = STUNNED.get(entity);
         if (ticks == null) return;
+        stopRangedUse(entity);
         AttributeInstance movement = entity.getAttribute(Attributes.MOVEMENT_SPEED);
         if (movement != null && movement.getModifier(STUN_SPEED) == null)
             movement.addTransientModifier(new AttributeModifier(STUN_SPEED, -1.0D, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));

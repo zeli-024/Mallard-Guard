@@ -13,8 +13,8 @@ public final class GuardMixinPlugin implements IMixinConfigPlugin {
         if (mixin.endsWith("BetterCombatFeintMixin")) return LoadingModList.get().getModFileById("bettercombat") != null;
         if (mixin.contains("Punchy")) {
             var file = LoadingModList.get().getModFileById("punchy");
-            return file != null && file.getMods().stream().anyMatch(mod ->
-                mod.getModId().equals("punchy") && (mod.getVersion().toString().equals("2.8b") || mod.getVersion().toString().equals("2.8d")));
+            return file != null && dev.zeli.mallardguard.GuardPunchyApi.compatible()
+                && (!mixin.endsWith("PunchyDiagnosticMixin") || dev.zeli.mallardguard.GuardPunchyApi.diagnosticsCompatible());
         }
         return true;
     }

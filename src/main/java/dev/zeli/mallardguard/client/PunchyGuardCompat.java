@@ -87,10 +87,7 @@ public final class PunchyGuardCompat {
     private static boolean initialize() {
         if (checked) return available;
         checked = true;
-        if (!ModList.get().getModContainerById("punchy").map(c -> {
-            String version = c.getModInfo().getVersion().toString();
-            return version.equals("2.8b") || version.equals("2.8d");
-        }).orElse(false)) return false;
+        if (!installed() || !dev.zeli.mallardguard.GuardPunchyApi.compatible()) return false;
         try {
             Class<?> manager = Class.forName("punchy.client.animation.PunchyAnimationManager");
             Class<?> pose = Class.forName("punchy.client.animation.PoseHandler");
@@ -771,6 +768,6 @@ public final class PunchyGuardCompat {
         loweredOwner.clear();
         clearOwnedState();
         available=false;
-        LoggerFactory.getLogger("MallardGuard").warn("Punchy guard animation is unavailable; guard poses are disabled.", exception);
+        LoggerFactory.getLogger("MallardGuard").warn("Punchy guard animation is unavailable; using the simple first-person guard pose.", exception);
     }
 }

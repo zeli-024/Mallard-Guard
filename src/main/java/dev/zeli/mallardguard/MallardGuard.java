@@ -61,6 +61,9 @@ public final class MallardGuard {
         NeoForge.EVENT_BUS.addListener(this::shieldBlock);
         NeoForge.EVENT_BUS.addListener(GuardCombatEffects::projectileImpact);
         NeoForge.EVENT_BUS.addListener(GuardCombatEffects::tickStun);
+        NeoForge.EVENT_BUS.addListener(GuardCombatEffects::startRangedUse);
+        NeoForge.EVENT_BUS.addListener(GuardCombatEffects::rangedItemInteraction);
+        NeoForge.EVENT_BUS.addListener(GuardCombatEffects::projectileSpawn);
         NeoForge.EVENT_BUS.addListener(GuardCombatEffects::leave);
     }
 
@@ -152,7 +155,12 @@ public final class MallardGuard {
     }
 
     private void shieldBlock(LivingShieldBlockEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player) || !GuardState.isShieldBlocking(player)) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!GuardConfig.BLOCK.get() && GuardItemRules.shieldLike(player.getUseItem())) {
+            event.setBlocked(false);
+            return;
+        }
+        if (!GuardState.isShieldBlocking(player)) return;
         if (GuardState.guardBreakPending(player)) { event.setBlocked(false); return; }
         if (!event.getBlocked() || event.getBlockedDamage() <= 0) return;
         GuardState.shieldBlocked(player);

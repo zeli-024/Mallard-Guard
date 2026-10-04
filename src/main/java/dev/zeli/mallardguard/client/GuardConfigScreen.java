@@ -325,7 +325,7 @@ public final class GuardConfigScreen extends Screen {
         allowUsableItems = settings.allowUsableItems();
         allowAnyItem = settings.allowAnyItem();
 
-        firstPersonAnimation = !(PunchyGuardCompat.installed() && extraClient[65] != 0) && GuardConfig.FIRST_PERSON_ANIMATION.get();
+        firstPersonAnimation = GuardConfig.FIRST_PERSON_ANIMATION.get();
         thirdPersonAnimation = GuardConfig.THIRD_PERSON_ANIMATION.get();
         includedItems = settings.includedItems(); excludedItems = settings.excludedItems(); shieldItems = settings.shieldItems();
         consumablePriority = settings.consumablePriority();
@@ -334,7 +334,6 @@ public final class GuardConfigScreen extends Screen {
         var savedPoses = dev.zeli.mallardguard.GuardPoseLibrary.snapshot();
         if (savedPoses.isEmpty()) savedPoses = java.util.stream.IntStream.range(0,GuardPoseSettings.COUNT).mapToObj(dev.zeli.mallardguard.GuardPoseLibrary::preset).toList();
         poseDraft = new GuardPoseManagerScreen.Draft(savedPoses);poseDraft.enabled=extraClient[65]!=0;
-        if (PunchyGuardCompat.installed() && extraClient[65] != 0) firstPersonAnimation = false;
         selectRememberedGroup();
     }
 
@@ -510,7 +509,7 @@ public final class GuardConfigScreen extends Screen {
                 }
                 dropdown("Spawn Equipment", () -> mobEquipmentOpen, "Fresh vanilla zombies, skeletons, pillagers, and vindicators can receive balanced gear. Melee tools use stone, iron, gold, or rarely diamond. Melee loadouts may have shields; ranged loadouts never do. Existing modded gear is preserved.");
                 if (mobEquipmentOpen && mobGuard) {
-                    sliderBound("Mob gear chance", () -> mobGearChance, "%", 1, true, v -> { mobGearChance = v; dirtyMobs = true; }, "Chance for a fresh eligible mob to receive a generated loadout. Melee choices are sword, axe, or pickaxe. Skeletons can retain a bow; pillagers retain crossbows and normal ranged AI. Tiers and shield rolls are internally balanced. Zombies and skeletons still get a helmet when their head slot is empty. Default: 50%.");
+                    sliderBound("Mob gear chance", () -> mobGearChance, "%", 1, true, v -> { mobGearChance = v; dirtyMobs = true; }, "One chance for the entire generated loadout, including armor. 0% generates no gear; 100% always passes the roll. Existing equipment is preserved. Melee choices are sword, axe, or pickaxe; skeletons may keep bows and pillagers keep crossbows. Tiers and shield rolls are internally balanced. Default: 50%.");
                 }
                 dropdown("Mob Eligibility", () -> mobEligibilityOpen, "Automatic support is limited to vanilla zombie and skeleton families and vindicators. Bosses with recognized boss tags are excluded. Add other goal-driven humanoids only after checking their AI and model compatibility.");
                 if (mobEligibilityOpen) {
@@ -566,7 +565,7 @@ public final class GuardConfigScreen extends Screen {
             dropdown("Guard Stance", () -> guardOpen, "Show or hide blocking stance and movement settings.");
             if (guardOpen) {
             toggle("Blocking", () -> block, v -> { block = v; rebuildWidgets(); }, true,
-                "Keep guarding when you hold the Guard key past the parry window. Guard defaults to Right Click and can be rebound in Controls.");
+                "Keep weapons and shields guarding past the parry window. Off also lowers shields after successful parries. Guard defaults to Right Click and can be rebound in Controls.");
             if (block) sliderBound("Damage reduction", () -> reductionPercent, "%", 1, true, v -> reductionPercent = v, "Damage prevented by held block. 50% halves the damage; 100% prevents it.");
             if (block) sliderBound("Weapon blocks before break", () -> toolMaxBlocks, "", 1, true, v -> { toolMaxBlocks = v; dirtyShield = true; }, "Successful weapon or empty-hand blocks before guard ends. 0 allows unlimited blocks. Attacking with your weapon remains available after guard breaks.");
             if (block) sliderBound("Guard break recharge", () -> shieldBreakTicks, " ticks", 1, true, v -> { shieldBreakTicks = v; dirtyShield = true; }, "Wait after the last allowed shield or weapon block before guarding again. A broken shield also receives an item cooldown. Minimum matches normal recharge; max 10 seconds.");
@@ -720,9 +719,9 @@ public final class GuardConfigScreen extends Screen {
                 if (animationOpen) {
                     toggle("Third-person guard pose", () -> thirdPersonAnimation, v -> thirdPersonAnimation = v, false,
                         "Show the guarding pose on players and supported humanoid mobs. Off hides it only on your client.");
-                    toggle("First-person guard pose", () -> firstPersonAnimation,
+                    toggle("First-person guard pose", () -> simplePoseDraftEnabled(),
                     v -> firstPersonAnimation = v, false,
-                    "Animate the guarding hand. Shields use their own animation. Automatically disabled while Punchy is installed and Punchy Compatibility is enabled.");
+                    "Animate the guarding hand. Automatically enabled when Punchy is absent or its enabled integration is unavailable. Compatible Punchy animations take priority without changing your saved preference. Shields use their own animation.");
                 }
             }
             if (page == 3) {
@@ -747,7 +746,7 @@ public final class GuardConfigScreen extends Screen {
         if (experimentalSection && page == 14) {
             if (PunchyGuardCompat.installed()) {
 
-            toggle("Punchy Compatibility", () -> extraClient[65] != 0, v -> {extraClient[65]=v?1:0;poseDraft.enabled=v;if(v)firstPersonAnimation=false;}, false, "Use Punchy for guard animations. Default: On. Requires Punchy.");
+            toggle("Punchy Compatibility", () -> extraClient[65] != 0, v -> {extraClient[65]=v?1:0;poseDraft.enabled=v;rebuildWidgets();}, false, "Use Punchy for guard animations when its animation API is compatible, including newer versions. Automatically fall back to the simple pose if integration is unavailable. Default: On.");
             sliderBound("Release delay", () -> extraClient[GuardPoseSettings.RELEASE_DELAY_SLOT], " ms", 1, false, v -> extraClient[GuardPoseSettings.RELEASE_DELAY_SLOT]=v, "Extra hold after hitlag finishes. No extra delay when hitlag does not occur. Applies to every Punchy preset. 0 removes the delay. Default: 50 ms.");
             poseEditor(false);
             }
@@ -1294,7 +1293,7 @@ public final class GuardConfigScreen extends Screen {
             Minecraft.getInstance().setScreen(new GuardPoseManagerScreen(this, draft, editable(server), result -> {
 
                 for (int i=0;i < GuardPoseSettings.COUNT;i++) { var pose=result.poses.get(i); int[] values=pose.values.clone();values[0]=pose.enabled?1:0;System.arraycopy(values,0,source,dev.zeli.mallardguard.GuardPoseSettings.OFFSET+i*23,23); }
-                source[65]=result.enabled?1:0;if(!server&&PunchyGuardCompat.installed()&&result.enabled)firstPersonAnimation=false;
+                source[65]=result.enabled?1:0;
                 if(server)enforcedPoseData=dev.zeli.mallardguard.GuardPoseLibrary.encodeAnimations(result.poses);
                 if (!server) poseDraft = result.copy();
                 dirty = true; if (server) dirtyServer = dirtyPolicy = true; else dirtyClient = true;
@@ -1450,9 +1449,17 @@ public final class GuardConfigScreen extends Screen {
             change.accept(!current.getAsBoolean());
             b.setMessage(damageToggle ? damageStatus(current.getAsBoolean()) : label(current.getAsBoolean()));
         }).bounds(settingX(), row(position), settingWidth(), 20).build());
-        button.active = editable(server) && !(name.equals("First-person guard pose") && PunchyGuardCompat.installed() && extraClient[65] != 0) && !(enforceSection && name.equals("First-person guard pose") && PunchyGuardCompat.installed() && enforcedDefaults[65] != 0);
-        if (name.equals("First-person guard pose") && PunchyGuardCompat.installed() && extraClient[65] != 0) tooltip += " Disabled while Punchy is installed and Punchy Compatibility is enabled.";
+        boolean automaticPose = !server && name.equals("First-person guard pose")
+            && (!PunchyGuardCompat.installed() || extraClient[65] != 0);
+        button.active = editable(server) && !automaticPose;
+        if (automaticPose) tooltip += " Selected automatically for the available animation renderer.";
         tip(button, tooltip);
+    }
+
+    private boolean simplePoseDraftEnabled() {
+        if (!PunchyGuardCompat.installed()) return true;
+        if (extraClient[65] != 0) return !PunchyGuardCompat.supportedVersion();
+        return firstPersonAnimation;
     }
 
     private void slider(String name, java.util.function.IntSupplier current, int min, int max, String suffix,
@@ -1543,7 +1550,7 @@ public final class GuardConfigScreen extends Screen {
         int[] effectiveClient = GuardClientPreset.readLocal();
         for (int i = 50; i < extraClient.length; i++) if (GuardClient.clientCategoryLocked(GuardClientPreset.categoryOf(i))) extraClient[i] = effectiveClient[i];
         if(GuardClient.clientCategoryLocked(GuardClientPreset.HUD)){hud=GuardConfig.HUD.get();shieldEffects=GuardConfig.SHIELD_EFFECTS.get();}
-        if(GuardClient.clientCategoryLocked(GuardClientPreset.ANIMATIONS)){firstPersonAnimation=!(PunchyGuardCompat.installed()&&extraClient[65]!=0)&&GuardConfig.FIRST_PERSON_ANIMATION.get();thirdPersonAnimation=GuardConfig.THIRD_PERSON_ANIMATION.get();}
+        if(GuardClient.clientCategoryLocked(GuardClientPreset.ANIMATIONS)){firstPersonAnimation=GuardConfig.FIRST_PERSON_ANIMATION.get();thirdPersonAnimation=GuardConfig.THIRD_PERSON_ANIMATION.get();}
         if (GuardClient.clientCategoryLocked(GuardClientPreset.SCREEN)) {
             memeFlash = GuardConfig.MEME_FLASH.get();
             flashStrength = GuardConfig.SCREEN_FLASH.get() ? GuardConfig.FLASH_STRENGTH.get() : 0;
@@ -1737,7 +1744,7 @@ public final class GuardConfigScreen extends Screen {
         clientValues[8] = perfectOrbSize;
         clientValues[9] = regularOrbOpacity;
         clientValues[10] = perfectOrbOpacity;
-        clientValues[11] = (!(PunchyGuardCompat.installed() && extraClient[65] != 0) && firstPersonAnimation) ? 1 : 0;
+        clientValues[11] = firstPersonAnimation ? 1 : 0;
         clientValues[12] = masterVolume;
         clientValues[13] = parryVolume;
         clientValues[14] = perfectVolume;
