@@ -106,7 +106,7 @@ public final class GuardConfig {
     public static final ModConfigSpec.IntValue SPARK_LIFETIME, SPARK_LENGTH, SPARK_EXPLOSIVENESS, SPARK_REACH;
     public static final ModConfigSpec.IntValue REGULAR_ORB_LIFETIME, PERFECT_ORB_LIFETIME, STREAK_AMOUNT, REGULAR_STREAK_AMOUNT, STREAK_LENGTH, STREAK_LIFETIME, STREAK_DOT_SIZE, STREAK_STRETCH_SPEED, STREAK_DOT_SPACING, REGULAR_STREAK_DOT_SPACING, STREAK_BALLISTIC_CURVE;
     // This changes only when the config schema or a default changes, never with the mod version.
-    static final int CONFIG_REVISION = 41;
+    static final int CONFIG_REVISION = 42;
     private static final ModConfigSpec.IntValue SERVER_REVISION;
     private static final ModConfigSpec.IntValue CLIENT_REVISION;
     private static final ModConfigSpec.IntValue PUNCHY_REVISION;
@@ -282,7 +282,11 @@ public final class GuardConfig {
         new DefaultChange(37, "pose2", "180/240 ms transitions", "300 ms entry; 360 ms release"),
         new DefaultChange(37, "pose3", "180/240 ms transitions", "300 ms entry; 360 ms release"),
         new DefaultChange(37, "pose4", "180/240 ms transitions", "300 ms entry; 360 ms release"),
-        new DefaultChange(37, "pose5", "180/240 ms transitions", "300 ms entry; 360 ms release")
+        new DefaultChange(37, "pose5", "180/240 ms transitions", "300 ms entry; 360 ms release"),
+        new DefaultChange(42, "timing.perfectTicks", "2", "3"),
+        new DefaultChange(42, "timing.parryTicks", "6", "8"),
+        new DefaultChange(42, "shields.coneSparks", "false", "true"),
+        new DefaultChange(42, "animation.firstPersonGuardPose", "false", "true")
     );
     private record PendingUpdate(ModConfig config, List<String> changes) {}
 
@@ -300,8 +304,8 @@ public final class GuardConfig {
         TOOL_MAX_BLOCKS = GuardSettingRanges.integer(server.comment("Successful weapon or empty-hand blocks before guard breaks; 0 allows unlimited blocks. Guard break delays the next guard but does not disable attacking with the item."), "toolMaxBlocks", 3, 0, 5);
         server.pop();
         server.push("timing");
-        PERFECT_TICKS = GuardSettingRanges.integer(server.comment("Perfect parry duration for tools; zero disables perfect parries."), "perfectTicks", 2, 0, 10);
-        PARRY_TICKS = GuardSettingRanges.integer(server.comment("Total weapon parry duration in ticks, including perfect parry ticks."), "parryTicks", 6, 1, 10);
+        PERFECT_TICKS = GuardSettingRanges.integer(server.comment("Perfect parry duration for tools; zero disables perfect parries."), "perfectTicks", 3, 0, 10);
+        PARRY_TICKS = GuardSettingRanges.integer(server.comment("Total weapon parry duration in ticks, including perfect parry ticks."), "parryTicks", 8, 1, 10);
         RECHARGE_TICKS = GuardSettingRanges.integer(server.comment("Time before another attempt; continues during held guard."), "rechargeTicks", 10, 1, 60);
         server.pop();
         server.push("defense");
@@ -360,7 +364,7 @@ public final class GuardConfig {
         SHIELD_BLACKLIST = server.comment("Item IDs or #tags excluded from shield recognition. Takes priority over shield tags and whitelist.").define("shieldBlacklist", "", value -> value instanceof String rules && GuardItemRules.valid(rules));
         server.pop();
         server.push("shields");
-        SHIELD_SPARK_CONE = server.comment("Off: shield sparks spray in a sphere. On: sparks and stars fan toward the attack in a 90-degree cone. Streak Lines remain spherical.").define("coneSparks", false);
+        SHIELD_SPARK_CONE = server.comment("Off: shield sparks spray in a sphere. On: sparks and stars fan toward the attack in a 90-degree cone. Streak Lines remain spherical.").define("coneSparks", true);
         SHIELD_PERFECT_TICKS = GuardSettingRanges.integer(server.comment("Shield perfect parry window, in ticks. 0 turns off shield perfect parries; cannot exceed total shield parry ticks."), "perfectTicks", 1, 0, 10);
         SHIELD_PARRY_TICKS = GuardSettingRanges.integer(server.comment("Total shield parry window in ticks, including perfect ticks; blocking follows without restarting shield use."), "parryTicks", 6, 1, 10);
         SHIELD_RECHARGE_TICKS = GuardSettingRanges.integer(server.comment("Shield parry recharge after leaving guard; separate from guard break recharge. Regular shield parries halve it and perfect shield parries reset it, like tool parries."), "rechargeTicks", 10, 1, 60);

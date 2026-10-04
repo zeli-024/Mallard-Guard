@@ -20,7 +20,7 @@ public final class GuardClientSettings {
         new Slot("display.perfectOrbSize", 1, 40, 0, 200, false, () -> GuardConfig.PERFECT_ORB_SIZE),
         new Slot("display.regularOrbOpacity", 1, 100, 0, 100, false, () -> GuardConfig.REGULAR_ORB_OPACITY),
         new Slot("display.perfectOrbOpacity", 1, 100, 0, 100, false, () -> GuardConfig.PERFECT_ORB_OPACITY),
-        new Slot("animation.firstPersonGuardPose", 16, 0, 0, 1, true, () -> GuardConfig.FIRST_PERSON_ANIMATION),
+        new Slot("animation.firstPersonGuardPose", 16, 1, 0, 1, true, () -> GuardConfig.FIRST_PERSON_ANIMATION),
         new Slot("audio.masterVolume", 4, 100, 0, 200, false, () -> GuardConfig.LOCAL_MASTER_VOLUME),
         new Slot("audio.parryVolume", 4, 65, 0, 200, false, () -> GuardConfig.LOCAL_PARRY_VOLUME),
         new Slot("audio.perfectVolume", 4, 130, 0, 200, false, () -> GuardConfig.LOCAL_PERFECT_VOLUME),
