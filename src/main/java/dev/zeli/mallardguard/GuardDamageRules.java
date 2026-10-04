@@ -37,6 +37,8 @@ public final class GuardDamageRules {
     private static String cachedProjectileText;
     private static Map<String, LinkedHashSet<String>> cachedProjectileSources = Map.of();
 
+    public static void clearSession(){HITS.clear();}
+
     private GuardDamageRules() {}
 
     public static void forget(ServerPlayer player) {
@@ -105,14 +107,9 @@ public final class GuardDamageRules {
     /** Impact hooks run before the projectile creates a DamageSource. */
     public static boolean canParryProjectile(Projectile projectile) {
         String type = BuiltInRegistries.ENTITY_TYPE.getKey(projectile.getType()).toString();
-        String observed = GuardConfig.OBSERVED_PROJECTILE_SOURCES.get();
-        if (!observed.equals(cachedProjectileText)) {
-            var updated = parseProjectileSources(observed);
-            cachedProjectileSources = updated == null ? Map.of() : updated;
-            cachedProjectileText = observed;
-        }
-        if (cachedProjectileSources.containsKey(type)) {
-            for (String id : cachedProjectileSources.get(type)) if (!allowed(id)) return false;
+        Map<String, LinkedHashSet<String>> observed = projectileSources();
+        if (observed.containsKey(type)) {
+            for (String id : observed.get(type)) if (!allowed(id)) return false;
             return true;
         }
         String id = projectile instanceof ThrownTrident ? "minecraft:trident"
@@ -120,6 +117,16 @@ public final class GuardDamageRules {
             : projectile instanceof ShulkerBullet ? "minecraft:bullet"
             : projectile instanceof Fireball ? "minecraft:fireball" : "";
         return id.isEmpty() || allowed(id);
+    }
+
+    private static Map<String, LinkedHashSet<String>> projectileSources() {
+        String observed = GuardConfig.OBSERVED_PROJECTILE_SOURCES.get();
+        if (!observed.equals(cachedProjectileText)) {
+            var updated = parseProjectileSources(observed);
+            cachedProjectileSources = updated == null ? Map.of() : updated;
+            cachedProjectileText = observed;
+        }
+        return cachedProjectileSources;
     }
 
     private static boolean allowed(String id) {
@@ -138,7 +145,9 @@ public final class GuardDamageRules {
         if (source.getDirectEntity() instanceof Projectile projectile) {
             String type = BuiltInRegistries.ENTITY_TYPE.getKey(projectile.getType()).toString();
             String encoded = GuardConfig.OBSERVED_PROJECTILE_SOURCES.get();
-            var mapping = parseProjectileSources(encoded);
+            var known = projectileSources();
+            var knownSources = known.get(type);
+            var mapping = knownSources != null && knownSources.contains(id) ? null : parseProjectileSources(encoded);
             if (mapping != null && mapping.values().stream().mapToInt(java.util.Set::size).sum() < 4096
                 && mapping.computeIfAbsent(type, key -> new LinkedHashSet<>()).add(id)) {
                 StringBuilder updated = new StringBuilder();
@@ -179,12 +188,16 @@ public final class GuardDamageRules {
         LinkedHashMap<String, Boolean> configured = parseRules(rules);
         if (configured != null) configured.keySet().forEach(id -> namespaces.add(ResourceLocation.parse(id).getNamespace()));
         List<String> names = new ArrayList<>();
+        int namesLength = 0;
         for (String namespace : namespaces) {
             String displayName = namespace.equals("minecraft") ? "Minecraft" : ModList.get().getModContainerById(namespace)
                 .map(mod -> mod.getModInfo().getDisplayName()).orElse(namespace);
             String clean = displayName.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ');
-            names.add(namespace + "\t" + clean.substring(0, Math.min(80, clean.length())));
-            if (String.join("\n", names).length() > 16000) { names.remove(names.size() - 1); break; }
+            String name = namespace + "\t" + clean.substring(0, Math.min(80, clean.length()));
+            int nextLength = namesLength + (names.isEmpty() ? 0 : 1) + name.length();
+            if (nextLength > 16000) break;
+            names.add(name);
+            namesLength = nextLength;
         }
         return new GuardPackets.DamageState(player.hasPermissions(2) && hits != null ? String.join(",", hits) : "",
             rules, String.join("\n", names), String.join(",", catalog));

@@ -22,10 +22,10 @@ import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 public final class GuardMobState {
     private static final java.util.Set<Mob> GOALS_ADDED = java.util.Collections.newSetFromMap(new WeakHashMap<>());
     private static final Map<Mob, State> STATES = new WeakHashMap<>();
-    private record ProjectileDefense(java.util.UUID defender, GuardState.Result result) {}
+    private record ProjectileDefense(java.util.UUID defender, GuardState.Result result, long tick) {}
     private static final Map<net.minecraft.world.entity.projectile.Projectile, ProjectileDefense> PROJECTILE_DEFENSES = new WeakHashMap<>();
     public static void projectileResult(net.minecraft.world.entity.projectile.Projectile projectile, Mob mob, GuardState.Result result) {
-        PROJECTILE_DEFENSES.put(projectile, new ProjectileDefense(mob.getUUID(), result));
+        PROJECTILE_DEFENSES.put(projectile, new ProjectileDefense(mob.getUUID(), result, mob.level().getGameTime()));
     }
     private static final String EQUIPMENT_ROLLED = "MallardGuardEquipmentRoll";
     private enum Behavior { IDLE, APPROACH, TACTICAL, PRESSURE, COUNTER }
@@ -58,7 +58,15 @@ public final class GuardMobState {
     }
     private static String cachedIds = "";
     private static java.util.Set<net.minecraft.resources.ResourceLocation> extraIds = java.util.Set.of();
+    private static String excludedText = "";
+    private static java.util.Set<String> excluded = java.util.Set.of();
+    private static boolean blacklisted(Mob mob) {
+        String text = GuardConfig.MOB_BLACKLIST.get();
+        if (!text.equals(excludedText)) { excluded = java.util.Set.copyOf(java.util.Arrays.stream(text.split(",")).map(String::trim).filter(v -> !v.isEmpty()).toList()); excludedText = text; }
+        return excluded.contains(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).toString());
+    }
     private static boolean supported(Mob mob) {
+        if (blacklisted(mob)) return false;
         if (mob instanceof net.minecraft.world.entity.boss.wither.WitherBoss
             || mob instanceof net.minecraft.world.entity.boss.enderdragon.EnderDragon
             || mob.getType().is(COMMON_BOSSES)
@@ -157,7 +165,7 @@ public final class GuardMobState {
         }
         ProjectileDefense remembered = source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.Projectile projectile
             ? PROJECTILE_DEFENSES.remove(projectile) : null;
-        GuardState.Result result = remembered != null && remembered.defender().equals(mob.getUUID()) ? remembered.result()
+        GuardState.Result result = remembered != null && remembered.tick() == mob.level().getGameTime() && remembered.defender().equals(mob.getUUID()) ? remembered.result()
             : react(mob, origin, GuardDamageRules.canParry(source), source.is(DamageTypeTags.IS_PROJECTILE), source.is(DamageTypeTags.IS_EXPLOSION));
         if (result == GuardState.Result.NONE) return;
         State state = STATES.get(mob);
@@ -344,7 +352,7 @@ public final class GuardMobState {
         STATES.clear(); GOALS_ADDED.clear(); PROJECTILE_DEFENSES.clear(); extraIds = java.util.Set.of(); cachedIds = "";
     }
     public static void join(EntityJoinLevelEvent event) {
-        if (!event.getLevel().isClientSide && event.getEntity() instanceof Mob mob && supported(mob) && GOALS_ADDED.add(mob))
+        if (!event.getLevel().isClientSide && GuardConfig.MOB_GUARD.get() && event.getEntity() instanceof Mob mob && supported(mob) && GOALS_ADDED.add(mob))
             mob.goalSelector.addGoal(-1, new GuardBehaviorGoal(mob));
     }
     private static final class GuardBehaviorGoal extends net.minecraft.world.entity.ai.goal.Goal {
@@ -389,11 +397,12 @@ public final class GuardMobState {
 
     public static void equip(EntityJoinLevelEvent event) {
         if (event.getLevel().isClientSide || event.loadedFromDisk() || !GuardConfig.MOB_GUARD.get()
-            || !(event.getEntity() instanceof Mob mob) || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).getNamespace().equals("minecraft")
+            || !(event.getEntity() instanceof Mob mob) || blacklisted(mob) || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).getNamespace().equals("minecraft")
             || !(mob instanceof Zombie || mob instanceof AbstractSkeleton || mob instanceof net.minecraft.world.entity.monster.Vindicator || mob instanceof net.minecraft.world.entity.monster.Pillager)
             || mob.getPersistentData().getBoolean(EQUIPMENT_ROLLED)) return;
         mob.getPersistentData().putBoolean(EQUIPMENT_ROLLED, true);
         if (mob instanceof Zombie || mob instanceof AbstractSkeleton) {
+            if (mob.getItemBySlot(EquipmentSlot.CHEST).isEmpty()) { mob.setItemSlot(EquipmentSlot.CHEST, new ItemStack(Items.IRON_CHESTPLATE)); mob.setDropChance(EquipmentSlot.CHEST, 0); }
             if (mob.getItemBySlot(EquipmentSlot.HEAD).isEmpty()) { mob.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET)); mob.setDropChance(EquipmentSlot.HEAD, 0); }
         }
         var held = mob.getMainHandItem();

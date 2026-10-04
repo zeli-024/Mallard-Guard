@@ -20,6 +20,8 @@ public final class GuardRetaliation {
     private static final Map<UUID, Integer> CURRENT = new HashMap<>(), CLIENT_FRAMES = new HashMap<>();
     private static int nextToken, enforcedFrames = 6;
 
+    public static void clearSession(){PENDING.clear();CURRENT.clear();CLIENT_FRAMES.clear();nextToken=0;}
+
     private GuardRetaliation() {}
 
     public static void clientFrames(ServerPlayer player, int frames) {
@@ -34,7 +36,7 @@ public final class GuardRetaliation {
         UUID id = player.getUUID();
         CURRENT.remove(id);
         boolean locked = GuardConfig.ENFORCE_CLIENT.get()
-            && (GuardConfig.CLIENT_EXEMPT_MASK.get() & GuardClientPreset.HUD) == 0;
+            && (GuardConfig.CLIENT_EXEMPT_MASK.get() & GuardClientPreset.SCREEN) == 0;
         int frames = locked ? enforcedFrames : CLIENT_FRAMES.getOrDefault(id, 0);
         if (frames == 0) return 0;
         LinkedHashMap<Integer, Pending> pending = PENDING.computeIfAbsent(id, ignored -> new LinkedHashMap<>());
@@ -87,8 +89,13 @@ public final class GuardRetaliation {
         if (expired != null) for (int token : expired) complete(player, token);
     }
 
+    public static void cancelPending(ServerPlayer player) {
+        UUID id = player.getUUID();
+        PENDING.remove(id); CURRENT.remove(id);
+    }
+
     public static void forget(ServerPlayer player) {
         UUID id = player.getUUID();
-        PENDING.remove(id); CURRENT.remove(id); CLIENT_FRAMES.remove(id);
+        cancelPending(player); CLIENT_FRAMES.remove(id);
     }
 }

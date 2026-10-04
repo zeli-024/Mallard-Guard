@@ -1,0 +1,215 @@
+package dev.zeli.mallardguard.client;
+
+import java.util.*;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+
+/** Shared action colors and compact confirmation dialogs. */
+final class GuardUi {
+    static final int PANEL=0x92211B2A, SIDEBAR=0x962C2535, BORDER=0xFFA88FAE, TEXT=0xFFF5F0F6, MUTED=0xFFC3B4CA, WARM=0xFFD8BEAA;
+    static void panel(GuiGraphics g,int x,int y,int width,int height,boolean sidebar){
+        g.fill(x,y,x+width,y+height,sidebar?SIDEBAR:PANEL);
+        g.renderOutline(x,y,width,height,BORDER);
+        g.fill(x,y,x+width,y+2,WARM);
+    }
+    static void slider(GuiGraphics g,net.minecraft.client.gui.components.AbstractSliderButton widget,double value,boolean changed){
+        int x=widget.getX(),y=widget.getY(),w=widget.getWidth(),h=widget.getHeight();
+        g.fill(x,y,x+w,y+h,0xA0211B2A);
+        g.renderOutline(x,y,w,h,changed?0xFFE7CD87:widget.isHoveredOrFocused()?WARM:0xFF947D9A);
+        int thumb=x+2+(int)(value*(w-7));g.fill(thumb,y+2,thumb+4,y+h-2,widget.active?WARM:0xFF62566B);
+        g.drawCenteredString(Minecraft.getInstance().font,widget.getMessage(),x+w/2,y+(h-8)/2,widget.active?TEXT:0xFF9B8EA4);
+    }
+    record Choice(String label, Runnable action) {}
+    static int accent(String text) {
+        if(text.equals("Undo"))return 0xFFE7CD87;
+        if(text.equals("On"))return 0xFFADD4AE;
+        if (text.startsWith("Reset") || text.startsWith("Delete")) return 0xFFE79999;
+        if (text.startsWith("Apply") || text.startsWith("Save") || text.startsWith("Confirm") || text.startsWith("Use")) return 0xFFADD4AE;
+        return 0xFF947D9A;
+    }
+    static int body(String label,boolean hover,boolean active) {
+        if(!active)return 0x69292431;
+        if(label.equals("Undo"))return hover?0xBC927C48:0xA86E5B36;
+        if(label.equals("On"))return hover?0xBC819C87:0xA86A8773;
+        if(label.equals("Issue Tracker"))return hover?0xFF161F2D:0xFF0D1726;
+        if(label.startsWith("Reset")||label.startsWith("Delete"))return hover?0xBC854457:0xA8623044;
+        if(label.startsWith("Apply")||label.startsWith("Save")||label.startsWith("Confirm"))return hover?0xBC819C87:0xA86A8773;
+        return hover?0xA45C4D68:0x84372D42;
+    }
+    private static long lastClickSound;
+    static Builder builder(Component text,Button.OnPress action){return new Builder(text,action);}
+    static final class Builder {
+        final Component text;final Button.OnPress action;int x,y,w=150,h=20;
+        Builder(Component text,Button.OnPress action){this.text=text;this.action=action;}
+        Builder bounds(int x,int y,int w,int h){this.x=x;this.y=y;this.w=w;this.h=h;return this;}
+        Button build(){return new Button(x,y,w,h,text,action,message->message.get()){
+            @Override public void renderWidget(GuiGraphics g,int mx,int my,float d){paint(g,this,mx,my,false,false);}
+            @Override public void playDownSound(net.minecraft.client.sounds.SoundManager manager){
+                long now=System.nanoTime();
+                if(now-lastClickSound<60_000_000L)return;
+                lastClickSound=now; super.playDownSound(manager);
+            }
+        };}
+    }
+    static Button button(String text,int x,int y,int w,int h,Runnable action){return builder(Component.literal(text),b->action.run()).bounds(x,y,w,h).build();}
+    static void paint(GuiGraphics g,Button button,int mx,int my,boolean selected,boolean red){
+        if(!button.visible)return;
+        var font=Minecraft.getInstance().font;int x=button.getX(),y=button.getY(),w=button.getWidth(),h=button.getHeight();
+        boolean hover=button.active&&button.isMouseOver(mx,my);String label=button.getMessage().getString();
+        int edge=selected?0xFFD8BEAA:hover?0xFFC3A5BE:0xFF76647F;
+        if(label.equals("Undo")||label.equals("On")||label.startsWith("Reset")||label.startsWith("Apply")||label.startsWith("Save")||label.startsWith("Confirm")||label.startsWith("Delete"))edge=accent(label);
+        if(label.equals("Issue Tracker"))edge=hover?0xFF6D86A8:0xFF40516B;
+        int fill=red?(hover?0xFF753E50:0xFF552B3C):selected?0x98493E55:body(label,hover,button.active);
+        g.fill(x,y,x+w,y+h,edge);g.fill(x+1,y+1,x+w-1,y+h-1,fill);
+        if(hover)g.fill(x+2,y+2,x+w-2,y+3,0x88F5E1F3);
+        if(selected)g.fill(x+1,y+1,x+4,y+h-1,0xFFD8BEAA);
+        int textColor=button.active||selected?0xFFF5F0F6:0xFF978C9E;
+        if(label.equals("<")||label.equals(">")){
+            chevron(g,x+(w-GuardUiLayout.ARROW_SIZE)/2,y+(h-GuardUiLayout.ARROW_SIZE)/2,label.equals("<")?2:0,textColor);
+        }else if(label.endsWith(" ▾")){
+            String text=label.substring(0,label.length()-2);
+            g.drawCenteredString(font,font.plainSubstrByWidth(text,w-GuardUiLayout.ARROW_SLOT-8),x+w/2,y+(h-8)/2,textColor);
+            chevron(g,x+w-GuardUiLayout.ARROW_SIZE-GuardUiLayout.CONTROL_GAP,y+(h-GuardUiLayout.ARROW_SIZE)/2,1,textColor);
+        }else g.drawCenteredString(font,font.plainSubstrByWidth(label,w-8),x+w/2,y+(h-8)/2,textColor);
+    }
+    static Button iconButton(String icon,String label,int x,int y,int size,Runnable action){
+        Button b=new Button(x,y,size,size,Component.literal(label),ignored->action.run(),message->message.get()){
+            @Override public void renderWidget(GuiGraphics g,int mx,int my,float d){
+                boolean hover=active&&isMouseOver(mx,my);int edge=hover?0xFFD8BEAA:0xFF76647F;
+                int fill=body(label,hover,active);if(icon.equals("delete"))edge=0xFFE79999;if(icon.equals("undo"))edge=0xFFE7CD87;if(icon.equals("github"))edge=hover?0xFF6D86A8:0xFF40516B;
+                g.fill(getX(),getY(),getX()+getWidth(),getY()+getHeight(),fill);
+                g.renderOutline(getX(),getY(),getWidth(),getHeight(),edge);
+                int color=icon.equals("delete")?0xFF973C49:icon.equals("undo")?0xFFE7CD87:active?0xFFF5F0F6:0xFF766D7E;
+                drawIcon(g,icon,getX()+(getWidth()-12)/2,getY()+(getHeight()-12)/2,color);
+            }
+        };b.setTooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(label)));return b;
+    }
+    static void drawIcon(GuiGraphics g,String icon,int x,int y,int c){
+        switch(icon){
+            case "github" -> {
+                String[] rows={"001100001100","011111111110","011111111110","111111111111","111111111111","111111111111","011111111110","001111111100","000111111000","011011110000","001111110000","000111110000"};
+                for(int r=0;r<rows.length;r++)for(int k=0;k<12;k++)if(rows[r].charAt(k)=='1')g.fill(x+k,y+r,x+k+1,y+r+1,c);
+            }
+            case "edit" -> {for(int i=0;i<7;i++)g.fill(x+2+i,y+8-i,x+5+i,y+11-i,c);g.fill(x+1,y+10,x+3,y+12,c);}
+            case "undo" -> {
+                var font=Minecraft.getInstance().font;
+                g.pose().pushPose();g.pose().translate(x+6,y+6,0);
+                g.pose().scale(GuardUiLayout.UNDO_ICON_SCALE,GuardUiLayout.UNDO_ICON_SCALE,1);
+                g.drawString(font,"↺",-font.width("↺")/2,-4,c,false);g.pose().popPose();
+            }
+            case "delete" -> {g.fill(x+2,y+3,x+10,y+4,c);g.fill(x+5,y+1,x+7,y+3,c);g.renderOutline(x+3,y+5,6,7,c);g.fill(x+5,y+6,x+6,y+10,c);}
+            case "motion" -> {g.renderOutline(x+1,y+1,10,10,c);g.fill(x+5,y+3,x+6,y+7,c);g.fill(x+5,y+6,x+9,y+7,c);}
+            case "assign" -> {g.renderOutline(x+1,y+3,7,5,c);g.renderOutline(x+5,y+5,7,5,c);}
+            case "copy" -> {g.renderOutline(x+1,y+1,7,8,c);g.renderOutline(x+5,y+4,7,8,c);}
+            case "hide" -> {g.renderOutline(x+1,y+4,10,5,c);g.fill(x+5,y+5,x+7,y+8,c);}
+            case "preview" -> {for(int i=0;i<5;i++)g.fill(x+3+i,y+2+i,x+4+i,y+11-i,c);}
+            case "on" -> {g.renderOutline(x+2,y+4,8,7,c);g.fill(x+5,y+1,x+7,y+7,c);}
+            case "off" -> {g.renderOutline(x+2,y+4,8,7,c);g.fill(x+5,y+1,x+7,y+7,c);g.fill(x+1,y+11,x+11,y+12,c);}
+            default -> {g.drawCenteredString(Minecraft.getInstance().font,"T",x+6,y+2,c);}
+        }
+    }
+    /** Direction: right=0, down=1, left=2. */
+    static void chevron(GuiGraphics g,int x,int y,int direction,int color){
+        int size=GuardUiLayout.ARROW_SIZE, thickness=GuardUiLayout.ARROW_THICKNESS;
+        for(int i=0;i<size;i++){
+            int offset=Math.min(i,size-1-i);
+            int px=direction==2?size/2-offset:offset;
+            if(direction==1)g.fill(x+i,y+offset,x+i+1,y+offset+thickness,color);
+            else g.fill(x+px,y+i,x+px+thickness,y+i+1,color);
+        }
+    }
+    static void logo(GuiGraphics g,int x,int y,int size){
+        g.fill(x-1,y-1,x+size+1,y+size+1,0xFF947D9A);
+        g.blit(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("mallardguard","textures/gui/mod_logo.png"),x,y,0,0,size,size,size,size);
+    }
+    static void openLink(Screen parent,String title,String url){
+        net.minecraft.Util.getPlatform().openUri(java.net.URI.create(url));
+        choices(parent,title,"Open the link in your browser or copy it if your desktop cannot open it.",
+            new Choice("Copy Link",()->{Minecraft.getInstance().keyboardHandler.setClipboard(url);Minecraft.getInstance().setScreen(parent);}),
+            new Choice("Open Browser",()->net.minecraft.Util.getPlatform().openUri(java.net.URI.create(url))),
+            new Choice("Back",()->Minecraft.getInstance().setScreen(parent)));
+    }
+    static void sections(Screen parent,int selected,java.util.function.IntConsumer choose,int x,int y,int width,int height){
+        Minecraft.getInstance().setScreen(new SectionMenu(parent,selected,choose,x,y,width,height));
+    }
+    private static final class SectionMenu extends Screen {
+        final Screen parent;final int selected,anchorX,anchorY,anchorWidth,anchorHeight;
+        final java.util.function.IntConsumer choose;
+        int left,top,w,menuHeight;private com.mojang.blaze3d.pipeline.TextureTarget backdrop;
+        SectionMenu(Screen parent,int selected,java.util.function.IntConsumer choose,int x,int y,int w,int h){
+            super(Component.literal("Config section"));this.parent=parent;this.selected=selected;this.choose=choose;
+            anchorX=x;anchorY=y;anchorWidth=w;anchorHeight=h;
+            var target=Minecraft.getInstance().getMainRenderTarget();
+            if(target.width>0&&target.height>0){backdrop=new com.mojang.blaze3d.pipeline.TextureTarget(target.width,target.height,false,false);GuardPreviewScreen.copy(target,backdrop);}
+        }
+        @Override protected void init(){
+            w=Math.min(anchorWidth+8,width-8);menuHeight=126;
+            left=Math.clamp(anchorX-4,4,Math.max(4,width-w-4));
+            top=Math.clamp(anchorY-5,4,Math.max(4,height-menuHeight-4));
+            String[] names={"Client","Server","Enforce","Experimental","Debug"};
+            var order=new ArrayList<Integer>();
+            order.add(selected);
+            for(int section:new int[]{0,1,2,4})if(section!=selected)order.add(section);
+            if(selected!=3)order.add(3);
+            for(int i=0;i<order.size();i++){
+                int section=order.get(i);
+                Button b=new Button(left+4,top+5+i*24,w-8,20,Component.literal(names[section]),ignored->{choose.accept(section);Minecraft.getInstance().setScreen(parent);},message->message.get()){
+                    @Override public void renderWidget(GuiGraphics g,int mx,int my,float d){paint(g,this,mx,my,false,section==3);}
+                };
+                b.active=section!=selected;addRenderableWidget(b);
+            }
+        }
+        @Override public void render(GuiGraphics g,int x,int y,float d){
+            g.flush();var target=Minecraft.getInstance().getMainRenderTarget();
+            if(backdrop!=null){GuardPreviewScreen.copy(backdrop,target);target.bindWrite(false);}
+            renderBackground(g,x,y,d);g.flush();
+            g.fill(left,top,left+w,top+menuHeight,0xDC211B2A);g.renderOutline(left,top,w,menuHeight,0xFF947D9A);
+            for(var widget:renderables)widget.render(g,x,y,d);
+        }
+        @Override public boolean mouseClicked(double x,double y,int button){
+            if(x<left||x>=left+w||y<top||y>=top+menuHeight){onClose();return true;}
+            if(button==0&&y>=top+5&&y<top+25){onClose();return true;}
+            return super.mouseClicked(x,y,button);
+        }
+        @Override public void removed(){if(backdrop!=null){backdrop.destroyBuffers();backdrop=null;}}
+        @Override public void onClose(){Minecraft.getInstance().setScreen(parent);}
+        @Override public boolean isPauseScreen(){return false;}
+    }
+    static void choices(Screen parent,String title,String message,Choice... choices) { Minecraft.getInstance().setScreen(new Dialog(parent,title,message,List.of(choices))); }
+    static void confirm(Screen parent,String title,String message,Runnable yes) {
+        choices(parent,title,message,new Choice(title.startsWith("Reset")?"Reset":"Confirm",()->{yes.run();Minecraft.getInstance().setScreen(parent);}),new Choice("Go Back",()->Minecraft.getInstance().setScreen(parent)));
+    }
+    static void apply(Screen screen,Runnable stay,Runnable close) {
+        close.run();
+    }
+    private static final class Dialog extends Screen {
+        final Screen parent;final String message;final List<Choice> choices;int left,top,w,panelHeight;
+        Dialog(Screen parent,String title,String message,List<Choice> choices){super(Component.literal(title));this.parent=parent;this.message=message;this.choices=choices;}
+        @Override protected void init(){
+            int count=choices.size();boolean vertical=count>3;int widest=0;
+            for(var choice:choices)widest=Math.max(widest,font.width(choice.label()));
+            w=Math.min(width-24,Math.max(font.width(title)+24,vertical?widest+40:(widest+20)*count+6*(count-1)+16));
+            left=(width-w)/2;panelHeight=vertical?42+count*24:62;top=Math.max(4,(height-panelHeight)/2);
+            int bw=vertical?w-16:(w-16-6*(count-1))/count;
+            for(int i=0;i<count;i++){
+                var choice=choices.get(i);var b=addRenderableWidget(button(choice.label(),left+8+(vertical?0:i*(bw+6)),top+32+(vertical?i*24:0),bw,20,choice.action()));
+                String detail=switch(choice.label()){
+                    case "Apply & Stay" -> "Save changes and keep this screen open.";
+                    case "Apply & Close" -> "Save changes and close this screen.";
+                    case "Reset Screen" -> "Reset this category to defaults. Apply to save.";
+                    case "Reset Section" -> "Reset this section to defaults. Apply to save.";
+                    case "Go Back", "Cancel" -> "Return without performing this action.";
+                    case "Discard" -> "Discard unsaved changes.";
+                    default -> message;
+                };
+                b.setTooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(detail)));
+            }
+        }
+        @Override public void render(GuiGraphics g,int x,int y,float d){g.flush();renderBackground(g,x,y,d);g.flush();g.fill(left,top,left+w,top+panelHeight,0xAA493E55);g.renderOutline(left,top,w,panelHeight,0xFF947D9A);g.drawCenteredString(font,title,width/2,top+11,0xFFF5F0F6);for(var widget:renderables)widget.render(g,x,y,d);}
+        @Override public void onClose(){Minecraft.getInstance().setScreen(parent);}
+        @Override public boolean isPauseScreen(){return false;}
+    }
+}

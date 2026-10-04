@@ -3,15 +3,12 @@ package dev.zeli.mallardguard;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.ItemAttributeModifiers;
-import net.minecraft.world.entity.EquipmentSlot;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.minecraft.server.level.ServerPlayer;
@@ -19,6 +16,7 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.item.UseAnim;
@@ -74,8 +72,14 @@ public final class GuardState {
     private GuardPackets.Status lastStatus;
     private static boolean clientCooldownPreventsGuard = true;
     private static boolean clientAllowEmptyHand;
+    private static GuardPackets.Settings clientRules;
+    private static String clientShieldBlacklist="";
+    public static void setClientShieldBlacklist(String blacklist){clientShieldBlacklist=blacklist;}
+    public static void setClientRules(GuardPackets.Settings rules){clientRules=rules;}
 
     public enum Result { NONE, PERFECT, PARRY, BLOCK }
+
+    public static void clearSession(){STATES.clear();ATTACK_LOCKS.clear();}
 
     private GuardState() {}
 
@@ -94,20 +98,21 @@ public final class GuardState {
         ItemStack stack = player.getItemInHand(hand);
         if (!stack.isEmpty() && (player.level().isClientSide ? clientCooldownPreventsGuard : GuardConfig.COOLDOWN_PREVENTS_GUARD.get())
             && player.getCooldowns().isOnCooldown(stack.getItem())) return false;
-        if (stack.isEmpty()) return player.level().isClientSide ? clientAllowEmptyHand : GuardConfig.ALLOW_EMPTY_HAND.get();
-        if (GuardConfig.ALLOW_ANY_ITEM.get()) return !GuardItemRules.matches(stack, GuardConfig.EXCLUDED_ITEMS.get());
-        if (GuardItemRules.shieldLike(stack)) return true;
-        if (GuardItemRules.matches(stack, GuardConfig.INCLUDED_ITEMS.get())) return true;
-        if (!GuardConfig.ALLOW_USABLE_ITEMS.get() && stack.getUseAnimation() != UseAnim.NONE) return false;
-        ItemAttributeModifiers modifiers = stack.get(DataComponents.ATTRIBUTE_MODIFIERS);
-        if (modifiers == null) return false;
-        for (ItemAttributeModifiers.Entry entry : modifiers.modifiers()) {
-            // Attack weapons commonly declare only MAINHAND damage even when
-            // the player chooses to guard with that same weapon in the offhand.
-            if (entry.attribute().is(Attributes.ATTACK_DAMAGE) && entry.modifier().amount() > 0
-                && (entry.slot().test(EquipmentSlot.MAINHAND) || hand == InteractionHand.OFF_HAND && entry.slot().test(EquipmentSlot.OFFHAND))) return true;
+        if (stack.isEmpty()) {
+            boolean allowed = player.level().isClientSide ? clientAllowEmptyHand : GuardConfig.ALLOW_EMPTY_HAND.get();
+            InteractionHand other = hand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+            return allowed && (player.getItemInHand(other).isEmpty() || !eligible(player, other));
         }
-        return false;
+        boolean client=player.level().isClientSide && clientRules!=null;
+        String excluded=client?clientRules.excludedItems():GuardConfig.EXCLUDED_ITEMS.get();
+        String included=client?clientRules.includedItems():GuardConfig.INCLUDED_ITEMS.get();
+        if (GuardItemRules.matches(stack, excluded)) return false;
+        if (client?clientRules.allowAnyItem():GuardConfig.ALLOW_ANY_ITEM.get()) return true;
+        if (client?GuardItemRules.shieldLike(stack,clientRules.shieldItems(),clientShieldBlacklist):GuardItemRules.shieldLike(stack)) return true;
+        if (GuardItemRules.matches(stack, included)) return true;
+        if (!(client?clientRules.allowUsableItems():GuardConfig.ALLOW_USABLE_ITEMS.get()) && stack.getUseAnimation() != UseAnim.NONE) return false;
+        // MAINHAND attack weapons remain valid when held in the offhand.
+        return GuardItemRules.hasAttackDamage(stack, hand == InteractionHand.OFF_HAND);
     }
 
     public static void setClientCooldownPreventsGuard(boolean enabled) {
@@ -120,7 +125,6 @@ public final class GuardState {
 
     public static void input(ServerPlayer player, boolean down, boolean requestedOffhand) {
         GuardState state = STATES.computeIfAbsent(player.getUUID(), ignored -> new GuardState());
-        if (down && GuardStagger.stunned(player)) down = false;
         if (down && GuardConfig.CONSUMABLE_PRIORITY.get() && GuardItemRules.consumableInEitherHand(player)) down = false;
         if (!down) {
             // Releasing guard in the same tick as the final block must not skip the break penalty.
@@ -136,24 +140,22 @@ public final class GuardState {
             return;
         }
         if (state.held || state.guardReleaseRequired || state.recharge > 0 || (!GuardConfig.PARRY.get() && !GuardConfig.BLOCK.get())) return;
-        InteractionHand requested = requestedOffhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-        InteractionHand hand = eligible(player, requested) ? requested :
-            eligible(player, requested == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND)
-                ? (requested == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND) : null;
-        InteractionHand shieldHand = eligible(player, InteractionHand.MAIN_HAND) && GuardItemRules.shieldLike(player.getMainHandItem()) ? InteractionHand.MAIN_HAND
-            : eligible(player, InteractionHand.OFF_HAND) && GuardItemRules.shieldLike(player.getOffhandItem()) ? InteractionHand.OFF_HAND : null;
-        InteractionHand weaponHand = shieldHand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-        boolean paired = shieldHand != null && !player.getItemInHand(weaponHand).isEmpty()
-            && !GuardItemRules.shieldLike(player.getItemInHand(weaponHand)) && eligible(player, weaponHand);
-        if (paired) {
-            hand = GuardConfig.SHIELD_RANDOM_HAND.get() ? (player.getRandom().nextBoolean() ? shieldHand : weaponHand)
-                : player.isShiftKeyDown() ? shieldHand : weaponHand;
-        }
-        if (shieldHand == null && eligible(player, InteractionHand.MAIN_HAND) && eligible(player, InteractionHand.OFF_HAND)
-            && !player.getMainHandItem().isEmpty() && !player.getOffhandItem().isEmpty()) {
-            if (player.isShiftKeyDown()) hand = InteractionHand.OFF_HAND;
-            else if (GuardConfig.DUAL_TOOL_RANDOM_HAND.get()) {
-                hand = state.toolHandRun >= 2 ? (state.lastToolHand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND)
+        boolean mainEligible = eligible(player, InteractionHand.MAIN_HAND);
+        boolean offEligible = eligible(player, InteractionHand.OFF_HAND);
+        InteractionHand hand = mainEligible ? InteractionHand.MAIN_HAND : offEligible ? InteractionHand.OFF_HAND : null;
+        if (mainEligible && offEligible) {
+            boolean mainShield = GuardItemRules.shieldLike(player.getMainHandItem());
+            boolean offShield = GuardItemRules.shieldLike(player.getOffhandItem());
+            if (GuardConfig.FORCE_CROUCH_OFFHAND.get() && player.isShiftKeyDown()) hand = InteractionHand.OFF_HAND;
+            else if (mainShield || offShield) {
+                int priority = GuardConfig.SHIELD_PARRY_PRIORITY.get();
+                hand = priority == 2 ? InteractionHand.MAIN_HAND
+                    : priority == 1 ? (mainShield ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND)
+                    : player.getRandom().nextBoolean() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
+            } else {
+                int priority = GuardConfig.PARRY_HAND_PRIORITY.get();
+                hand = priority == 1 ? InteractionHand.OFF_HAND : priority == 2 ? InteractionHand.MAIN_HAND
+                    : state.toolHandRun >= 2 ? (state.lastToolHand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND)
                     : player.getRandom().nextBoolean() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
             }
             state.toolHandRun = hand == state.lastToolHand ? state.toolHandRun + 1 : 1;
@@ -180,6 +182,11 @@ public final class GuardState {
 
     public static void tick(PlayerTickEvent.Post event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!player.isAlive()) {
+            forget(player);
+            GuardRetaliation.cancelPending(player);
+            return;
+        }
         GuardRetaliation.tick(player);
         GuardState state = STATES.get(player.getUUID());
         if (state == null) return;
@@ -198,7 +205,7 @@ public final class GuardState {
                 state.elapsed++;
                 boolean shield = GuardItemRules.shieldLike(state.heldItem);
                 if (state.elapsed >= (shield ? GuardConfig.SHIELD_PARRY_TICKS : GuardConfig.PARRY_TICKS).get()) {
-                    state.phase = GuardItemRules.shieldLike(state.heldItem) ? 4 : GuardConfig.BLOCK.get() ? 3 : 0;
+                    state.phase = shield ? 4 : GuardConfig.BLOCK.get() ? 3 : 0;
                     if (state.phase == 4) {
                         // Keep the existing use action so the shield pose never restarts.
                         state.recharge = GuardConfig.SHIELD_RECHARGE_TICKS.get();
@@ -216,6 +223,8 @@ public final class GuardState {
         }
         updateMovement(player, state.held && state.phase != 0);
         sync(player, state);
+        if (!state.held && state.phase == 0 && state.recharge == 0
+            && player.level().getGameTime() > state.safetyThroughTick) state.heldItem = ItemStack.EMPTY;
     }
 
     private static void applyGuardBreak(ServerPlayer player, GuardState state) {

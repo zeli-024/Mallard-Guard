@@ -10,7 +10,13 @@
     "client.LivingEntityRendererMixin",
     "client.EmfGuardPoseMixin",
     "client.BetterCombatFeintMixin",
-    "client.LivingEntityAttackTickerAccessor"
+    "client.LivingEntityAttackTickerAccessor",
+    "client.PunchyGuardPoseMixin",
+    "client.PunchyGuardVisibilityMixin",
+    "client.PunchyGuardRendererMixin",
+    "client.PunchyGuardIntentMixin",
+    "client.PunchyGuardReloadMixin",
+    "client.PunchyDiagnosticMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -20,8 +20,11 @@ import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 public final class GuardConfig {
+    public static final ModConfigSpec.IntValue DEBUG_CLIENT_FLAGS;
     public static final ModConfigSpec SERVER_SPEC;
     public static final ModConfigSpec CLIENT_SPEC;
+    public static final ModConfigSpec PUNCHY_SPEC;
+    public static final ModConfigSpec.ConfigValue<String> MOB_BLACKLIST;
     public static final ModConfigSpec.BooleanValue PARRY;
     public static final ModConfigSpec.ConfigValue<String> DAMAGE_RULES;
     public static final ModConfigSpec.ConfigValue<String> OBSERVED_PROJECTILE_SOURCES;
@@ -62,7 +65,7 @@ public final class GuardConfig {
     public static final ModConfigSpec.IntValue GUARD_MOVEMENT_PERCENT;
     public static final ModConfigSpec.IntValue BLOCK_DEFLECT_CHANCE;
     public static final ModConfigSpec.IntValue SHIELD_PERFECT_TICKS, SHIELD_PARRY_TICKS, SHIELD_RECHARGE_TICKS, SHIELD_MAX_BLOCKS, TOOL_MAX_BLOCKS, SHIELD_BREAK_TICKS;
-    public static final ModConfigSpec.BooleanValue COOLDOWN_PREVENTS_GUARD, SHIELD_RANDOM_HAND, SHIELD_SPARK_CONE;
+    public static final ModConfigSpec.BooleanValue COOLDOWN_PREVENTS_GUARD, FORCE_CROUCH_OFFHAND, SHIELD_SPARK_CONE;
     public static final ModConfigSpec.IntValue SHIELD_CONE_DEGREES, SHIELD_CONE_REACH, SHIELD_RETALIATION_PERCENT, SHIELD_STUN_TICKS, SHIELD_PUSHBACK_PERCENT, TOOL_PUSHBACK_PERCENT, SHIELD_PARRY_PUSHBACK_PERCENT;
     public static final ModConfigSpec.ConfigValue<String> SHIELD_STUN_BOSSES;
     public static final ModConfigSpec.BooleanValue ALLOW_USABLE_ITEMS;
@@ -79,19 +82,22 @@ public final class GuardConfig {
     public static final ModConfigSpec.IntValue HITLAG_FRAMES, IMPACT_FRAMES;
     public static final ModConfigSpec.IntValue IMPACT_BRIGHTNESS, IMPACT_CONTRAST, IMPACT_EDGES, IMPACT_GRAIN;
     public static final ModConfigSpec.IntValue IMPACT_CHROMATIC, MOB_IMPACT_BRIGHTNESS, MOB_IMPACT_CONTRAST, MOB_IMPACT_EDGES, MOB_IMPACT_GRAIN, MOB_IMPACT_CHROMATIC;
-    public static final ModConfigSpec.BooleanValue MOB_IMPACT_ADAPT, MOB_IMPACT_INVERT, CHROMATIC_PERFECT_ONLY, CHROMATIC_HUD, STREAK_REVERSE, STAGGER_COMPACT;
-    public static final ModConfigSpec.IntValue CHROMATIC_INTENSITY, CHROMATIC_TICKS, STAGGER_HUD_OFFSET;
+    public static final ModConfigSpec.BooleanValue MOB_IMPACT_ADAPT, MOB_IMPACT_INVERT, CHROMATIC_PERFECT_ONLY, CHROMATIC_HUD, STREAK_REVERSE;
+    public static final ModConfigSpec.IntValue CHROMATIC_INTENSITY, CHROMATIC_TICKS;
     public static final ModConfigSpec.IntValue FLASH_STRENGTH;
     public static final ModConfigSpec.BooleanValue SCREEN_SHAKE;
     public static final ModConfigSpec.IntValue SHAKE_STRENGTH;
-    public static final ModConfigSpec.BooleanValue PREFER_OFFHAND;
+    public static final ModConfigSpec.IntValue PARRY_HAND_PRIORITY, SHIELD_PARRY_PRIORITY;
+    public static final ModConfigSpec.ConfigValue<String> SHIELD_BLACKLIST;
     public static final ModConfigSpec.IntValue REGULAR_ORB_SIZE;
     public static final ModConfigSpec.IntValue PERFECT_ORB_SIZE;
     public static final ModConfigSpec.IntValue REGULAR_ORB_OPACITY;
     public static final ModConfigSpec.IntValue PERFECT_ORB_OPACITY;
-    public static final ModConfigSpec.BooleanValue FIRST_PERSON_ANIMATION, THIRD_PERSON_ANIMATION, DUAL_TOOL_RANDOM_HAND, MOB_GUARD;
-    public static final ModConfigSpec.BooleanValue MOB_BLOCKING, MOB_RETALIATION, STAGGER_ENABLED;
-    public static final ModConfigSpec.IntValue STAGGER_CELLS, STAGGER_PARRY_LOSS, STAGGER_PERFECT_LOSS, STAGGER_RESTORE, STAGGER_NEAR_TICKS, STAGGER_FAR_TICKS, STAGGER_RADIUS, STAGGER_STUN_TICKS, STAGGER_EXIT_RECOVERY;
+    public static final ModConfigSpec.BooleanValue PUNCHY_COMPAT;
+    public static final ModConfigSpec.IntValue PUNCHY_RELEASE_DELAY;
+    public static final java.util.List<ModConfigSpec.ConfigValue<String>> PUNCHY_POSES;
+    public static final ModConfigSpec.BooleanValue FIRST_PERSON_ANIMATION, THIRD_PERSON_ANIMATION, MOB_GUARD;
+    public static final ModConfigSpec.BooleanValue MOB_BLOCKING, MOB_RETALIATION;
     public static final ModConfigSpec.ConfigValue<String> MOB_HUMANOID_IDS;
     public static final ModConfigSpec.IntValue MOB_APPROACH_CHANCE, MOB_TACTICAL_CHANCE, MOB_TACTICAL_SECONDS, MOB_TACTICAL_COOLDOWN, MOB_MOVEMENT, MOB_APPROACH_DISTANCE, MOB_APPROACH_SECONDS, MOB_RUSH_CHANCE, MOB_GEAR_CHANCE;
     public static final ModConfigSpec.IntValue MOB_COUNTER_TICKS, MOB_DIFFICULTY, MOB_HITS_TO_GUARD, MOB_PERFECT_TICKS, MOB_PARRY_TICKS, MOB_PARRY_COLOR, MOB_PERFECT_COLOR;
@@ -100,9 +106,10 @@ public final class GuardConfig {
     public static final ModConfigSpec.IntValue SPARK_LIFETIME, SPARK_LENGTH, SPARK_EXPLOSIVENESS, SPARK_REACH;
     public static final ModConfigSpec.IntValue REGULAR_ORB_LIFETIME, PERFECT_ORB_LIFETIME, STREAK_AMOUNT, REGULAR_STREAK_AMOUNT, STREAK_LENGTH, STREAK_LIFETIME, STREAK_DOT_SIZE, STREAK_STRETCH_SPEED, STREAK_DOT_SPACING, REGULAR_STREAK_DOT_SPACING, STREAK_BALLISTIC_CURVE;
     // This changes only when the config schema or a default changes, never with the mod version.
-    static final int CONFIG_REVISION = 22;
+    static final int CONFIG_REVISION = 41;
     private static final ModConfigSpec.IntValue SERVER_REVISION;
     private static final ModConfigSpec.IntValue CLIENT_REVISION;
+    private static final ModConfigSpec.IntValue PUNCHY_REVISION;
     private static String currentVersion;
     private static Path serverConfigFolder;
     private static final List<PendingUpdate> PENDING_UPDATES = new ArrayList<>();
@@ -218,8 +225,6 @@ public final class GuardConfig {
         new DefaultChange(18, "mobs.shieldChance", "10%", "100%"),
         new DefaultChange(18, "mobs.swordShieldChance", "10%", "100%"),
         new DefaultChange(18, "mobs.axeShieldChance", "10%", "100%"),
-        new DefaultChange(21, "stagger.cells", "10", "5"),
-        new DefaultChange(21, "stagger.stunTicks", "20", "40"),
         new DefaultChange(21, "mobs.hitsBeforeGuard", "2", "1"),
         new DefaultChange(21, "mobs.tacticalChance", "15", "35"),
         new DefaultChange(21, "mobs.tacticalMaxSeconds", "10", "5"),
@@ -236,7 +241,6 @@ public final class GuardConfig {
         new DefaultChange(22, "mobs.approachMaxSeconds", "3", "2"),
         new DefaultChange(22, "mobs.rushChance", "60", "70"),
         new DefaultChange(22, "mobs.gearChance", "40", "50"),
-        new DefaultChange(22, "stagger.enabled", "true", "false"),
         new DefaultChange(22, "display.impactBrightness", "186", "400"),
         new DefaultChange(22, "display.impactContrast", "110", "200"),
         new DefaultChange(22, "display.impactEdges", "200", "400"),
@@ -245,51 +249,83 @@ public final class GuardConfig {
         new DefaultChange(22, "display.chromaticIntensity", "35", "200"),
         new DefaultChange(22, "display.chromaticTicks", "8", "10"),
         new DefaultChange(22, "display.chromaticHud", "false", "true"),
-        new DefaultChange(22, "display.staggerCompact", "false", "true"),
-        new DefaultChange(22, "display.staggerHudOffset", "0", "1")
+        new DefaultChange(24, "display.streakReverse", "false", "true"),
+        new DefaultChange(24, "display.regularOrbSize", "10", "20"),
+        new DefaultChange(24, "display.perfectOrbSize", "30", "40"),
+        new DefaultChange(24, "sparks.streakAmount", "90", "100"),
+        new DefaultChange(24, "sparks.regularStreakAmount", "80", "100"),
+        new DefaultChange(24, "sparks.streakLength", "80", "150"),
+        new DefaultChange(24, "sparks.streakLifetime", "30", "25"),
+        new DefaultChange(24, "sparks.streakDotSize", "30", "100"),
+        new DefaultChange(24, "sparks.streakDotSpacing", "20", "35"),
+        new DefaultChange(24, "sparks.streakBallisticCurve", "40", "20"),
+        new DefaultChange(24, "sparks.regularStreakDotSpacing", "60", "50"),
+        new DefaultChange(24, "stance.damageRules", "minecraft:generic_kill=1", "minecraft:generic_kill=1,minecraft:arrow=1,minecraft:lava=0,minecraft:hot_floor=0"),
+                new DefaultChange(24, "items.allowAnyItem", "true", "false"),
+        new DefaultChange(24, "shields.perfectTicks", "2", "1"),
+        new DefaultChange(24, "shields.rechargeTicks", "20", "10"),
+        new DefaultChange(24, "animation.firstPersonGuardPose", "true", "false"),
+        new DefaultChange(28, "items.allowUsableItems", "true", "false"),
+        new DefaultChange(29, "pose1", "200 ms transitions", "250 ms transitions"),
+        new DefaultChange(29, "pose2", "200 ms transitions", "250 ms transitions"),
+        new DefaultChange(29, "pose3", "200 ms transitions", "250 ms transitions"),
+        new DefaultChange(29, "pose4", "300 ms transitions", "250 ms transitions"),
+        new DefaultChange(29, "pose5", "200/180 ms transitions", "250 ms transitions"),
+        new DefaultChange(33, "pose1", "250 ms transitions", "original pose; 200 ms transitions"),
+        new DefaultChange(33, "pose2", "250 ms transitions", "200 ms transitions"),
+        new DefaultChange(33, "pose3", "250 ms transitions", "200 ms transitions"),
+        new DefaultChange(33, "pose4", "250 ms transitions", "300 ms transitions"),
+        new DefaultChange(33, "pose5", "enabled; 250 ms transitions", "disabled; 200/180 ms transitions"),
+        new DefaultChange(34, "pose1–pose5", "previous preset defaults", "uploaded presets; 180/240 ms transitions; Preset 5 enabled and empty-hand only"),
+        new DefaultChange(36, "shields.shieldParryPriority", "1 (Shield)", "2 (Default: player main hand)"),
+        new DefaultChange(37, "pose1", "180/240 ms transitions", "300 ms entry; 360 ms release"),
+        new DefaultChange(37, "pose2", "180/240 ms transitions", "300 ms entry; 360 ms release"),
+        new DefaultChange(37, "pose3", "180/240 ms transitions", "300 ms entry; 360 ms release"),
+        new DefaultChange(37, "pose4", "180/240 ms transitions", "300 ms entry; 360 ms release"),
+        new DefaultChange(37, "pose5", "180/240 ms transitions", "300 ms entry; 360 ms release")
     );
     private record PendingUpdate(ModConfig config, List<String> changes) {}
 
     static {
         ModConfigSpec.Builder server = new ModConfigSpec.Builder();
-        SERVER_REVISION = server.comment("Mallard Guard config format revision. This changes only when settings or their defaults change.")
-            .defineInRange("configRevision", CONFIG_REVISION, 0, Integer.MAX_VALUE);
+        SERVER_REVISION = GuardSettingRanges.integer(server.comment("Mallard Guard config format revision. This changes only when settings or their defaults change."),
+            "configRevision", CONFIG_REVISION, 0, Integer.MAX_VALUE);
         server.push("stance");
         PARRY = server.comment("Allow parries when the guard key is pressed. Right Click by default; the key can be changed.").define("parry", true);
         DAMAGE_RULES = server.comment("Per-damage-type parry rules, stored as damage_type_id=1 or =0, separated by commas. Configure in game.")
-            .define("damageRules", "minecraft:generic_kill=1", value -> value instanceof String rules && GuardDamageRules.validRules(rules));
+            .define("damageRules", "minecraft:generic_kill=1,minecraft:arrow=1,minecraft:lava=0,minecraft:hot_floor=0", value -> value instanceof String rules && GuardDamageRules.validRules(rules));
         OBSERVED_PROJECTILE_SOURCES = server.comment("Automatically learned projectile entity ID to damage type ID associations. Updated after players are hit; used to honor modded projectile source rules at impact.")
             .define("observedProjectileSources", "", value -> value instanceof String mapping && GuardDamageRules.validProjectileSources(mapping));
         BLOCK = server.comment("Keep guarding after the parry window while the guard key is held.").define("block", true);
-        TOOL_MAX_BLOCKS = server.comment("Successful weapon or empty-hand blocks before guard breaks; 0 allows unlimited blocks. Guard break delays the next guard but does not disable attacking with the item.").defineInRange("toolMaxBlocks", 3, 0, 5);
+        TOOL_MAX_BLOCKS = GuardSettingRanges.integer(server.comment("Successful weapon or empty-hand blocks before guard breaks; 0 allows unlimited blocks. Guard break delays the next guard but does not disable attacking with the item."), "toolMaxBlocks", 3, 0, 5);
         server.pop();
         server.push("timing");
-        PERFECT_TICKS = server.comment("Perfect parry duration for tools; zero disables perfect parries.").defineInRange("perfectTicks", 2, 0, 5);
-        PARRY_TICKS = server.comment("Total weapon parry duration in ticks, including perfect parry ticks.").defineInRange("parryTicks", 6, 1, 10);
-        RECHARGE_TICKS = server.comment("Time before another attempt; continues during held guard.").defineInRange("rechargeTicks", 10, 1, 60);
+        PERFECT_TICKS = GuardSettingRanges.integer(server.comment("Perfect parry duration for tools; zero disables perfect parries."), "perfectTicks", 2, 0, 10);
+        PARRY_TICKS = GuardSettingRanges.integer(server.comment("Total weapon parry duration in ticks, including perfect parry ticks."), "parryTicks", 6, 1, 10);
+        RECHARGE_TICKS = GuardSettingRanges.integer(server.comment("Time before another attempt; continues during held guard."), "rechargeTicks", 10, 1, 60);
         server.pop();
         server.push("defense");
-        FACING_ANGLE = server.comment("Maximum angle from the player's view direction; 180 allows the front half, 360 allows attacks from any direction.").defineInRange("facingAngle", 180, 0, 360);
-        BLOCK_REDUCTION = server.comment("Fraction of incoming entity damage prevented while holding guard.").defineInRange("blockReduction", 0.5, 0.0D, 1.0D);
-        FOLLOW_UP_TICKS = server.comment("Ticks after a successful parry that catch additional valid hits; zero disables it. Follow-up hits never extend this window.").defineInRange("followUpParryTicks", 3, 0, 20);
-        PARRY_RETALIATION = server.comment("Regular parry damage returned as a fraction of the incoming damage. This damage adds no knockback; attacker pushback is separate. 0 disables it; 2 doubles it.").defineInRange("parryRetaliation", 0.25, 0.0D, 2.0D);
-        PERFECT_RETALIATION = server.comment("Perfect parry damage returned as a fraction of the incoming damage. This damage adds no knockback; attacker pushback is separate. 0 disables it; 2 doubles it.").defineInRange("perfectRetaliation", 0.5, 0.0D, 2.0D);
-        RETALIATION_CAP = server.comment("Maximum damage returned by one parry to each target after the retaliation multiplier. 0 removes the cap. Applies to weapon and shield retaliation.").defineInRange("retaliationCap", 25, 0, 1000);
-        PARRY_WEAR = server.comment("Wear in tenths of a percent of maximum durability per regular or follow-up parry. 2 means 0.2%; rounded up. 0 disables wear.").defineInRange("parryWear", 2, 0, 100);
-        PERFECT_WEAR = server.comment("Wear in tenths of a percent of maximum durability per perfect parry. 1 means 0.1%; rounded up. 0 disables wear.").defineInRange("perfectWear", 1, 0, 100);
-        BLOCK_WEAR = server.comment("Wear in tenths of a percent of maximum durability per blocked hit. 4 means 0.4%; rounded up. Real shields keep their own block wear.").defineInRange("blockWear", 4, 0, 100);
+        FACING_ANGLE = GuardSettingRanges.integer(server.comment("Maximum angle from the player's view direction; 180 allows the front half, 360 allows attacks from any direction."), "facingAngle", 180, 0, 360);
+        BLOCK_REDUCTION = GuardSettingRanges.decimal(server.comment("Fraction of incoming entity damage prevented while holding guard."), "blockReduction", 0.5, 0.0D, 1.0D);
+        FOLLOW_UP_TICKS = GuardSettingRanges.integer(server.comment("Ticks after a successful parry that catch additional valid hits; zero disables it. Follow-up hits never extend this window."), "followUpParryTicks", 3, 0, 20);
+        PARRY_RETALIATION = GuardSettingRanges.decimal(server.comment("Regular parry damage returned as a fraction of the incoming damage. This damage adds no knockback; attacker pushback is separate. 0 disables it; 2 doubles it."), "parryRetaliation", 0.25, 0.0D, 2.0D);
+        PERFECT_RETALIATION = GuardSettingRanges.decimal(server.comment("Perfect parry damage returned as a fraction of the incoming damage. This damage adds no knockback; attacker pushback is separate. 0 disables it; 2 doubles it."), "perfectRetaliation", 0.5, 0.0D, 2.0D);
+        RETALIATION_CAP = GuardSettingRanges.integer(server.comment("Maximum damage returned by one parry to each target after the retaliation multiplier. 0 removes the cap. Applies to weapon and shield retaliation."), "retaliationCap", 25, 0, 1000);
+        PARRY_WEAR = GuardSettingRanges.integer(server.comment("Wear in tenths of a percent of maximum durability per regular or follow-up parry. 2 means 0.2%; rounded up. 0 disables wear."), "parryWear", 2, 0, 100);
+        PERFECT_WEAR = GuardSettingRanges.integer(server.comment("Wear in tenths of a percent of maximum durability per perfect parry. 1 means 0.1%; rounded up. 0 disables wear."), "perfectWear", 1, 0, 100);
+        BLOCK_WEAR = GuardSettingRanges.integer(server.comment("Wear in tenths of a percent of maximum durability per blocked hit. 4 means 0.4%; rounded up. Real shields keep their own block wear."), "blockWear", 4, 0, 100);
         server.pop();
         server.push("effects");
         HIT_SOUNDS = server.comment("Play the supplied parry and block sounds to nearby players.").define("hitSounds", true);
         HIT_PARTICLES = server.comment("Send parry sparks, Streak Lines, and spherical flashes to nearby players; perfect parries also show star-shaped sparks. Blocks create none.").define("hitParticles", true);
-        MASTER_VOLUME = server.comment("Server master volume for guard sounds sent to nearby clients. 100% plays the recorded level; each listener's client master and individual volume settings multiply it. 0% mutes the sounds.").defineInRange("masterVolume", 100, 0, 200);
-        PERFECT_VOLUME = server.comment("Perfect parry sound volume, multiplied by master volume.").defineInRange("perfectVolume", 130, 0, 200);
-        PARRY_VOLUME = server.comment("Regular parry sound volume, multiplied by master volume.").defineInRange("parryVolume", 65, 0, 200);
-        BLOCK_VOLUME = server.comment("Held block sound volume, multiplied by master volume.").defineInRange("blockVolume", 65, 0, 200);
+        MASTER_VOLUME = GuardSettingRanges.integer(server.comment("Server master volume for guard sounds sent to nearby clients. 100% plays the recorded level; each listener's client master and individual volume settings multiply it. 0% mutes the sounds."), "masterVolume", 100, 0, 200);
+        PERFECT_VOLUME = GuardSettingRanges.integer(server.comment("Perfect parry sound volume, multiplied by master volume."), "perfectVolume", 130, 0, 200);
+        PARRY_VOLUME = GuardSettingRanges.integer(server.comment("Regular parry sound volume, multiplied by master volume."), "parryVolume", 65, 0, 200);
+        BLOCK_VOLUME = GuardSettingRanges.integer(server.comment("Held block sound volume, multiplied by master volume."), "blockVolume", 65, 0, 200);
         server.pop();
         server.push("clientEnforcement");
         ENFORCE_CLIENT = server.comment("Apply server chosen client defaults when players connect and lock categories without a Don't Enforce exception.").define("enabled", false);
-        CLIENT_EXEMPT_MASK = server.comment("Client categories editable after receiving server defaults: 1 particles, 2 visuals, 4 audio, 8 hand selection, 16 experimental stagger display.").defineInRange("dontEnforceMask", 0, 0, GuardClientPreset.ALL_CATEGORIES);
+        CLIENT_EXEMPT_MASK = GuardSettingRanges.integer(server.comment("Client categories editable after receiving server defaults: 1 world particles, 2 HUD icons, 4 audio, 8 screen effects, 16 animations, 32 experimental Punchy poses."), "dontEnforceMask", 0, 0, GuardClientPreset.ALL_CATEGORIES);
         CLIENT_PRESET = server.comment("Client defaults shared by the server; changed through the Enforce configuration screen.")
             .define("defaults", GuardClientPreset.encode(GuardClientPreset.DEFAULTS), value -> value instanceof String data && GuardClientPreset.valid(data));
         server.pop();
@@ -297,80 +333,74 @@ public final class GuardConfig {
         FALL_LOOK_DOWN = server.comment("Require looking at least 40 degrees below the horizon to parry a fall. On: preserve current horizontal momentum, bouncing in place when still. Off: fall parries work in any direction and launch where you look.").define("fallLookDown", true);
         FALL_PERFECT_PARRY = server.comment("Allow perfect parries on fall damage or wall collisions. Off: catching either impact in the perfect window performs a regular parry instead.").define("fallPerfectParry", true);
         FALL_BREAK_BLOCKS = server.comment("Allow the blast from a long fall parry to break terrain. Disable to prevent terrain damage.").define("fallBlastBreaksBlocks", true);
-        FALL_BLAST_STRENGTH = server.comment("Fall parry blast scaling as a percentage of Parry It's default 0.1 radius per damage; 0 disables the blast.").defineInRange("fallBlastStrength", 100, 0, 200);
-        FALL_LAUNCH_POWER = server.comment("Fall parry launch strength as a percentage of Parry It's default. Perfect falls launch twice as far. 0 disables launch.").defineInRange("fallLaunchPower", 10, 0, 200);
+        FALL_BLAST_STRENGTH = GuardSettingRanges.integer(server.comment("Fall parry blast scaling as a percentage of Parry It's default 0.1 radius per damage; 0 disables the blast."), "fallBlastStrength", 100, 0, 200);
+        FALL_LAUNCH_POWER = GuardSettingRanges.integer(server.comment("Fall parry launch strength as a percentage of Parry It's default. Perfect falls launch twice as far. 0 disables launch."), "fallLaunchPower", 10, 0, 200);
         PARRY_EXPLOSIONS = server.comment("Allow parry timing to negate explosion damage.").define("parryExplosions", true);
         PERFECT_EXPLOSIONS_ONLY = server.comment("When explosion parrying is enabled, require a perfect parry; regular parries do not negate explosions.").define("perfectExplosionsOnly", false);
         BLOCK_EXPLOSIONS = server.comment("Allow held block to reduce explosion damage by the normal block reduction.").define("blockExplosions", true);
         PARRY_PROJECTILES = server.comment("Parry projectile entities. Regular parries deflect them randomly; perfect parries send them toward the original owner.").define("parryProjectiles", true);
         BLOCK_PROJECTILES = server.comment("Allow held block to reduce projectile damage by the normal block reduction.").define("blockProjectiles", true);
         DEFENDER_KNOCKBACK = server.comment("Push the defender away from the impact on successful melee, projectile, and explosion parries. Shield parries use half strength.").define("defenderKnockback", true);
-        KNOCKBACK_STRENGTH = server.comment("Push strength for the defender in percent; shield parries use half the configured strength. 0 disables both.").defineInRange("knockbackStrength", 80, 0, 200);
-        GUARD_MOVEMENT_PERCENT = server.comment("Movement speed while guarding, including parry and block. 100 keeps normal movement speed.").defineInRange("guardMovementPercent", 55, 0, 100);
-        BLOCK_DEFLECT_CHANCE = server.comment("Chance to deflect a projectile during held block. 0 disables deflection; every projectile type uses the same roll.").defineInRange("blockDeflectChance", 0, 0, 100);
+        KNOCKBACK_STRENGTH = GuardSettingRanges.integer(server.comment("Push strength for the defender in percent; shield parries use half the configured strength. 0 disables both."), "knockbackStrength", 80, 0, 200);
+        GUARD_MOVEMENT_PERCENT = GuardSettingRanges.integer(server.comment("Movement speed while guarding, including parry and block. 100 keeps normal movement speed."), "guardMovementPercent", 55, 0, 100);
+        BLOCK_DEFLECT_CHANCE = GuardSettingRanges.integer(server.comment("Chance to deflect a projectile during held block. 0 disables deflection; every projectile type uses the same roll."), "blockDeflectChance", 0, 0, 100);
         server.pop();
         server.push("items");
-        ALLOW_ANY_ITEM = server.comment("Off: recognized weapons and shields plus extra allowed items may guard. On: all held items except excluded items may guard. Empty hands use a separate toggle.").define("allowAnyItem", true);
+        ALLOW_ANY_ITEM = server.comment("Off: recognized weapons and shields plus extra allowed items may guard. On: all held items except excluded items may guard. Empty hands use a separate toggle.").define("allowAnyItem", false);
         ALLOW_EMPTY_HAND = server.comment("Allow guarding with an empty hand. Separate from allowing all held items; off by default.").define("allowEmptyHand", false);
         CONSUMABLE_PRIORITY = server.comment("When enabled, food and drinks in either hand take priority over guard, even if the other hand holds a weapon. Enabled by default.").define("consumablePriority", true);
-        ALLOW_USABLE_ITEMS = server.comment("Allow eligible items with a hold-to-use action to guard. Whitelisted items and universal guard are also allowed.").define("allowUsableItems", true);
-        INCLUDED_ITEMS = server.comment("Extra allowed item IDs or #tags when universal guard is off; recognized weapons and shields are already allowed.").define("includedItems", "", value -> value instanceof String rules && GuardItemRules.valid(rules));
-        EXCLUDED_ITEMS = server.comment("Item IDs or #tags excluded when universal guard is on; empty hands remain eligible.").define("excludedItems", "", value -> value instanceof String rules && GuardItemRules.valid(rules));
+        ALLOW_USABLE_ITEMS = server.comment("Allow eligible items with a hold-to-use action to guard. Whitelisted items and universal guard are also allowed.").define("allowUsableItems", false);
+        INCLUDED_ITEMS = server.comment("Item IDs or #tags allowed beyond the tool requirement. The item blacklist still takes priority.").define("includedItems", "", value -> value instanceof String rules && GuardItemRules.valid(rules));
+        EXCLUDED_ITEMS = server.comment("Item IDs or #tags that cannot guard in any mode. Overrides whitelist and shield recognition. Empty hands use a separate toggle.").define("excludedItems", "", value -> value instanceof String rules && GuardItemRules.valid(rules));
         SHIELD_ITEMS = server.comment("Extra item IDs or #tags treated as shields. Built-in shields and blocking items are detected automatically. A whitelist or blacklist can still restrict them.").define("shieldItems", "", value -> value instanceof String rules && GuardItemRules.valid(rules));
         COOLDOWN_PREVENTS_GUARD = server.comment("When on, an item with an active vanilla or modded cooldown cannot enter the guard stance. Another eligible hand can still guard.").define("cooldownPreventsGuard", true);
-        DUAL_TOOL_RANDOM_HAND = server.comment("With two eligible non-shield items, randomly choose the actual guarding hand for each new stance, never repeating it more than twice while standing. Crouching always chooses the eligible offhand. Off uses the client hand preference while standing. Timing and durability follow the chosen item.").define("randomDualTools", true);
-        SHIELD_RANDOM_HAND = server.comment("With an eligible weapon and shield, randomly choose which item actually guards each new stance. Its timing, damage, blocking and durability rules apply. Overrides the usual crouch-to-shield and standing-to-weapon selection.").define("randomShieldWeapon", false);
+        PARRY_HAND_PRIORITY = GuardSettingRanges.integer(server.comment("Guarding hand: 0 Random, 1 Off-Hand, 2 Main-Hand. Falls back to the other eligible hand."), "parryHandPriority", 0, 0, 2);
+        SHIELD_PARRY_PRIORITY = GuardSettingRanges.integer(server.comment("When either eligible hand holds a shield: 0 Random, 1 Shield, 2 Default (player main hand). Falls back to the other eligible hand. Force Crouch Off-Hand overrides this."), "shieldParryPriority", 2, 0, 2);
+        FORCE_CROUCH_OFFHAND = server.comment("Crouching selects the eligible offhand before other hand priorities.").define("forceCrouchOffhand", true);
+        SHIELD_BLACKLIST = server.comment("Item IDs or #tags excluded from shield recognition. Takes priority over shield tags and whitelist.").define("shieldBlacklist", "", value -> value instanceof String rules && GuardItemRules.valid(rules));
         server.pop();
         server.push("shields");
         SHIELD_SPARK_CONE = server.comment("Off: shield sparks spray in a sphere. On: sparks and stars fan toward the attack in a 90-degree cone. Streak Lines remain spherical.").define("coneSparks", false);
-        SHIELD_PERFECT_TICKS = server.comment("Shield perfect parry window, in ticks. 0 turns off shield perfect parries; cannot exceed total shield parry ticks.").defineInRange("perfectTicks", 2, 0, 3);
-        SHIELD_PARRY_TICKS = server.comment("Total shield parry window in ticks, including perfect ticks; blocking follows without restarting shield use.").defineInRange("parryTicks", 6, 1, 10);
-        SHIELD_RECHARGE_TICKS = server.comment("Shield parry recharge after leaving guard; separate from guard break recharge. Regular shield parries halve it and perfect shield parries reset it, like tool parries.").defineInRange("rechargeTicks", 20, 1, 60);
-        SHIELD_MAX_BLOCKS = server.comment("Successful shield blocks before guard breaks; 0 allows unlimited blocks. Disabled shields still obey vanilla cooldown.").defineInRange("maxBlocks", 5, 0, 10);
-        SHIELD_BREAK_TICKS = server.comment("Recharge after the last allowed shield or weapon block. Shields also receive an item cooldown; weapons remain usable for attacking. At least the normal parry recharge applies. Default 100 ticks = 5 seconds.").defineInRange("breakTicks", 100, 1, 200);
-        SHIELD_CONE_DEGREES = server.comment("Angle to each side of your view for the shield perfect parry cone. 90 degrees covers the whole front half (180 degrees total). 0 disables cone effects.").defineInRange("perfectCone", 90, 0, 90);
-        SHIELD_CONE_REACH = server.comment("Maximum eye-to-eye distance in blocks for shield perfect parry cone effects.").defineInRange("perfectConeReach", 5, 1, 10);
-        SHIELD_RETALIATION_PERCENT = server.comment("Shield perfect parry damage to each target in its cone as a percentage of incoming damage. 0 disables damage; stun and pushback still apply.").defineInRange("perfectDamage", 10, 0, 30);
-        SHIELD_STUN_TICKS = server.comment("Time in ticks that normal targets hit by a shield perfect parry cannot voluntarily move or attack; 0 disables the stun.").defineInRange("stunTicks", 30, 0, 100);
-        SHIELD_PUSHBACK_PERCENT = server.comment("Shield perfect parry cone pushback strength; 0 disables pushback. Knockback applies before stun.").defineInRange("perfectPushback", 35, 0, 200);
-        SHIELD_PARRY_PUSHBACK_PERCENT = server.comment("Shield regular parry pushback on the attacker; 0 disables pushback.").defineInRange("regularPushback", 85, 0, 200);
-        TOOL_PUSHBACK_PERCENT = server.comment("Regular and perfect weapon parry pushback on the attacker; 0 disables pushback.").defineInRange("weaponPushback", 80, 0, 200);
+        SHIELD_PERFECT_TICKS = GuardSettingRanges.integer(server.comment("Shield perfect parry window, in ticks. 0 turns off shield perfect parries; cannot exceed total shield parry ticks."), "perfectTicks", 1, 0, 10);
+        SHIELD_PARRY_TICKS = GuardSettingRanges.integer(server.comment("Total shield parry window in ticks, including perfect ticks; blocking follows without restarting shield use."), "parryTicks", 6, 1, 10);
+        SHIELD_RECHARGE_TICKS = GuardSettingRanges.integer(server.comment("Shield parry recharge after leaving guard; separate from guard break recharge. Regular shield parries halve it and perfect shield parries reset it, like tool parries."), "rechargeTicks", 10, 1, 60);
+        SHIELD_MAX_BLOCKS = GuardSettingRanges.integer(server.comment("Successful shield blocks before guard breaks; 0 allows unlimited blocks. Disabled shields still obey vanilla cooldown."), "maxBlocks", 5, 0, 10);
+        SHIELD_BREAK_TICKS = GuardSettingRanges.integer(server.comment("Recharge after the last allowed shield or weapon block. Shields also receive an item cooldown; weapons remain usable for attacking. At least the normal parry recharge applies. Default 100 ticks = 5 seconds."), "breakTicks", 100, 1, 200);
+        SHIELD_CONE_DEGREES = GuardSettingRanges.integer(server.comment("Angle to each side of your view for the shield perfect parry cone. 90 degrees covers the whole front half (180 degrees total). 0 disables cone effects."), "perfectCone", 90, 0, 90);
+        SHIELD_CONE_REACH = GuardSettingRanges.integer(server.comment("Maximum eye-to-eye distance in blocks for shield perfect parry cone effects."), "perfectConeReach", 5, 1, 10);
+        SHIELD_RETALIATION_PERCENT = GuardSettingRanges.integer(server.comment("Shield perfect parry damage to each target in its cone as a percentage of incoming damage. 0 disables damage; stun and pushback still apply."), "perfectDamage", 10, 0, 30);
+        SHIELD_STUN_TICKS = GuardSettingRanges.integer(server.comment("Time in ticks that normal targets hit by a shield perfect parry cannot voluntarily move or attack; 0 disables the stun."), "stunTicks", 30, 0, 100);
+        SHIELD_PUSHBACK_PERCENT = GuardSettingRanges.integer(server.comment("Shield perfect parry cone pushback strength; 0 disables pushback. Knockback applies before stun."), "perfectPushback", 35, 0, 200);
+        SHIELD_PARRY_PUSHBACK_PERCENT = GuardSettingRanges.integer(server.comment("Shield regular parry pushback on the attacker; 0 disables pushback."), "regularPushback", 85, 0, 200);
+        TOOL_PUSHBACK_PERCENT = GuardSettingRanges.integer(server.comment("Regular and perfect weapon parry pushback on the attacker; 0 disables pushback."), "weaponPushback", 80, 0, 200);
         SHIELD_STUN_BOSSES = server.comment("Boss entity IDs or #entity tags explicitly allowed to be stunned. By default, bosses are immune to stun.").define("stunnableBosses", "", value -> value instanceof String rules && GuardItemRules.valid(rules));
         server.pop();
+        server.push("punchy");
+        server.pop();
         server.push("mobs");
+        MOB_BLACKLIST = server.comment("Entity IDs excluded from mob guarding and generated gear. Comma-separated. Default: vindicators, evokers, pillagers, and villagers.").define("blacklist", "minecraft:vindicator,minecraft:evoker,minecraft:pillager,minecraft:villager", value -> value instanceof String ids && GuardItemRules.valid(ids) && !ids.contains("#"));
         MOB_GUARD = server.comment("Allow supported non-boss, goal-driven humanoids with eligible weapons or shields to use approach, tactical, and damage-pressure guarding. Empty hands do not qualify.").define("enabled", false);
-        MOB_DIFFICULTY = server.comment("Scales approach, tactical, and damage-pressure chances. At 100%, pressure begins at 40% after the configured hit count and rises with further damaging hits. Pressure resets after entering a behavior or 10 seconds without damage. 0 disables new guarding decisions.").defineInRange("guardDifficulty", 100, 0, 100);
-        MOB_HITS_TO_GUARD = server.comment("Landed damaging combat hits needed for a pressure-based guarding attempt. Does not limit approach or tactical guarding. Default: 1. The hit that triggers the stance still deals damage; the mob can parry subsequent attacks.").defineInRange("hitsBeforeGuard", 1, 1, 3);
-        MOB_PERFECT_TICKS = server.comment("Perfect portion at the start of a mob parry stance. Applies to mob weapons and shields, independently of player timing. 0 disables perfect parries. Default: 20 ticks.").defineInRange("perfectTicks", 20, 0, 20);
-        MOB_PARRY_TICKS = server.comment("Regular mob parry duration after its perfect portion, for weapons and shields. Default: 60 ticks.").defineInRange("parryTicks", 60, 1, 60);
+        MOB_DIFFICULTY = GuardSettingRanges.integer(server.comment("Scales approach, tactical, and damage-pressure chances. At 100%, pressure begins at 40% after the configured hit count and rises with further damaging hits. Pressure resets after entering a behavior or 10 seconds without damage. 0 disables new guarding decisions."), "guardDifficulty", 100, 0, 100);
+        MOB_HITS_TO_GUARD = GuardSettingRanges.integer(server.comment("Landed damaging combat hits needed for a pressure-based guarding attempt. Does not limit approach or tactical guarding. Default: 1. The hit that triggers the stance still deals damage; the mob can parry subsequent attacks."), "hitsBeforeGuard", 1, 1, 3);
+        MOB_PERFECT_TICKS = GuardSettingRanges.integer(server.comment("Perfect portion at the start of a mob parry stance. Applies to mob weapons and shields, independently of player timing. 0 disables perfect parries. Default: 20 ticks."), "perfectTicks", 20, 0, 20);
+        MOB_PARRY_TICKS = GuardSettingRanges.integer(server.comment("Regular mob parry duration after its perfect portion, for weapons and shields. Default: 60 ticks."), "parryTicks", 60, 1, 60);
         MOB_BLOCKING = server.comment("Allow blocking for 20 ticks after each raised parry window, using full shield blocking or tool damage reduction. Default: false.").define("blocking", false);
-        MOB_COUNTER_TICKS = server.comment("Maximum duration of a fast counter approach after a mob parry. One melee attack at most, followed by normal AI. 0 disables this counter approach. Default: 12 ticks.").defineInRange("counterTicks", 12, 0, 40);
-        MOB_APPROACH_CHANCE = server.comment("Chance to raise guard on the first close approach to a target, within the randomly chosen approach distance. Scaled by mob guard difficulty. 0 disables. Default: 100%.").defineInRange("approachChance", 100, 0, 100);
-        MOB_TACTICAL_CHANCE = server.comment("Chance per scheduled combat decision (every 2-4 seconds) to begin tactical guarding. Scaled by difficulty and limited by its cooldown. 0 disables. Default: 100%.").defineInRange("tacticalChance", 100, 0, 100);
-        MOB_TACTICAL_SECONDS = server.comment("Maximum tactical sequence duration. Each sequence randomly lasts 1 second through this maximum, choosing either stillness or strafing. Raised windows alternate with vulnerable 5-10 tick gaps. Default: 5 seconds.").defineInRange("tacticalMaxSeconds", 5, 1, 10);
-        MOB_TACTICAL_COOLDOWN = server.comment("Ticks after a tactical sequence's reserved end before another may begin. Default: 200 ticks (10 seconds).").defineInRange("tacticalCooldownTicks", 200, 20, 1200);
+        MOB_COUNTER_TICKS = GuardSettingRanges.integer(server.comment("Maximum duration of a fast counter approach after a mob parry. One melee attack at most, followed by normal AI. 0 disables this counter approach. Default: 12 ticks."), "counterTicks", 12, 0, 40);
+        MOB_APPROACH_CHANCE = GuardSettingRanges.integer(server.comment("Chance to raise guard on the first close approach to a target, within the randomly chosen approach distance. Scaled by mob guard difficulty. 0 disables. Default: 100%."), "approachChance", 100, 0, 100);
+        MOB_TACTICAL_CHANCE = GuardSettingRanges.integer(server.comment("Chance per scheduled combat decision (every 2-4 seconds) to begin tactical guarding. Scaled by difficulty and limited by its cooldown. 0 disables. Default: 100%."), "tacticalChance", 100, 0, 100);
+        MOB_TACTICAL_SECONDS = GuardSettingRanges.integer(server.comment("Maximum tactical sequence duration. Each sequence randomly lasts 1 second through this maximum, choosing either stillness or strafing. Raised windows alternate with vulnerable 5-10 tick gaps. Default: 5 seconds."), "tacticalMaxSeconds", 5, 1, 10);
+        MOB_TACTICAL_COOLDOWN = GuardSettingRanges.integer(server.comment("Ticks after a tactical sequence's reserved end before another may begin. Default: 200 ticks (10 seconds)."), "tacticalCooldownTicks", 200, 20, 1200);
         MOB_HUMANOID_IDS = server.comment("Additional entity IDs explicitly declared to be non-boss, goal-driven humanoids. Separate IDs with commas. Built-in zombie/skeleton families and vindicators are supported automatically. Brain-based mobs and custom attack/animation systems require integration. Known or tagged bosses are always excluded. Default: empty.").define("humanoidIds", "", value -> value instanceof String ids && GuardItemRules.valid(ids) && !ids.contains("#"));
         MOB_RETALIATION = server.comment("Return damage on mob parries using the server's regular/perfect retaliation multipliers and cap. Shield perfect parries use the shield damage percentage. Default: true.").define("retaliationEnabled", true);
-        MOB_PARRY_COLOR = server.comment("RGB color for mob regular-parry particles, stored as a decimal RGB integer. The red HUD reaction uses its own artwork.").defineInRange("parryColor", 16733525, 0, 0xFFFFFF);
-        MOB_PERFECT_COLOR = server.comment("RGB color for mob perfect-parry particles, stored as a decimal RGB integer. The red HUD reaction uses its own artwork.").defineInRange("perfectColor", 16724804, 0, 0xFFFFFF);
-        MOB_MOVEMENT = server.comment("Movement speed retained while a mob guards. Independent of player guarding speed. 100% causes no guard slowdown; 0% prevents deliberate movement. Default: 100%.").defineInRange("guardMovement", 100, 0, 100);
-        MOB_APPROACH_DISTANCE = server.comment("Maximum distance for surprise approach guarding. Each encounter chooses a trigger distance between 1 block and this maximum. Default: 2 blocks.").defineInRange("approachDistance", 2, 1, 5);
-        MOB_APPROACH_SECONDS = server.comment("Maximum approach stance duration. Each attempt lasts randomly from 1 second through this maximum. Parry windows repeat with vulnerable gaps if needed. Default: 2 seconds.").defineInRange("approachMaxSeconds", 2, 1, 10);
-        MOB_RUSH_CHANCE = server.comment("Chance to immediately rush the target after a successful mob parry, instead of lowering guard or raising one follow-up stance. Default: 70%.").defineInRange("rushChance", 70, 0, 100);
-        MOB_GEAR_CHANCE = server.comment("Chance to assign a fresh vanilla zombie, skeleton, pillager, or vindicator a balanced loadout. Existing modded gear is preserved. Tool tiers are stone, iron, gold, and rarely diamond. Melee loadouts may include a shield; ranged loadouts never do. Default: 50%.").defineInRange("gearChance", 50, 0, 100);
+        MOB_PARRY_COLOR = GuardSettingRanges.integer(server.comment("RGB color for mob regular-parry particles, stored as a decimal RGB integer. The red HUD reaction uses its own artwork."), "parryColor", 16733525, 0, 0xFFFFFF);
+        MOB_PERFECT_COLOR = GuardSettingRanges.integer(server.comment("RGB color for mob perfect-parry particles, stored as a decimal RGB integer. The red HUD reaction uses its own artwork."), "perfectColor", 16724804, 0, 0xFFFFFF);
+        MOB_MOVEMENT = GuardSettingRanges.integer(server.comment("Movement speed retained while a mob guards. Independent of player guarding speed. 100% causes no guard slowdown; 0% prevents deliberate movement. Default: 100%."), "guardMovement", 100, 0, 100);
+        MOB_APPROACH_DISTANCE = GuardSettingRanges.integer(server.comment("Maximum distance for surprise approach guarding. Each encounter chooses a trigger distance between 1 block and this maximum. Default: 2 blocks."), "approachDistance", 2, 1, 5);
+        MOB_APPROACH_SECONDS = GuardSettingRanges.integer(server.comment("Maximum approach stance duration. Each attempt lasts randomly from 1 second through this maximum. Parry windows repeat with vulnerable gaps if needed. Default: 2 seconds."), "approachMaxSeconds", 2, 1, 10);
+        MOB_RUSH_CHANCE = GuardSettingRanges.integer(server.comment("Chance to immediately rush the target after a successful mob parry, instead of lowering guard or raising one follow-up stance. Default: 70%."), "rushChance", 70, 0, 100);
+        MOB_GEAR_CHANCE = GuardSettingRanges.integer(server.comment("Chance to assign a fresh vanilla zombie, skeleton, pillager, or vindicator a balanced loadout. Existing modded gear is preserved. Tool tiers are stone, iron, gold, and rarely diamond. Melee loadouts may include a shield; ranged loadouts never do. Default: 50%."), "gearChance", 50, 0, 100);
         server.pop();
-        server.push("stagger");
-        STAGGER_STUN_TICKS = server.comment("Stagger duration when the cells reach zero. 0 disables the stun. Only the configured exit-recovery cells are restored after the stun. Default: 40 ticks.").defineInRange("stunTicks", 40, 0, 60);
-        STAGGER_EXIT_RECOVERY = server.comment("Cells restored when stagger ends, limited to the configured maximum cells. Default: 2.").defineInRange("exitRecovery", 2, 0, 10);
-        STAGGER_ENABLED = server.comment("Show and track stagger cells. Zero cells causes the configured stagger duration.").define("enabled", false);
-        STAGGER_CELLS = server.comment("Maximum stagger cells. Default: 5.").defineInRange("cells", 5, 1, 10);
-        STAGGER_PARRY_LOSS = server.comment("Cells lost when a mob parries your hit. Default: 1.").defineInRange("parryLoss", 1, 0, 20);
-        STAGGER_PERFECT_LOSS = server.comment("Cells lost when a mob perfectly parries your hit. Default: 2.").defineInRange("perfectLoss", 2, 0, 20);
-        STAGGER_RESTORE = server.comment("Cells restored by your own perfect parry. Default: 1.").defineInRange("perfectRestore", 1, 0, 20);
-        STAGGER_NEAR_TICKS = server.comment("Ticks to restore one cell near enemies. 0 disables recovery. Default: 100.").defineInRange("nearRecoveryTicks", 100, 0, 1200);
-        STAGGER_FAR_TICKS = server.comment("Ticks to restore one cell away from enemies. 0 disables recovery. Default: 20.").defineInRange("safeRecoveryTicks", 20, 0, 1200);
-        STAGGER_RADIUS = server.comment("Enemy detection radius in blocks. Hostile mobs and mobs targeting you count. Default: 12.").defineInRange("enemyRadius", 12, 1, 32);
-        server.pop();
+
 
         SERVER_SPEC = server.build();
 
@@ -378,78 +408,90 @@ public final class GuardConfig {
         CLIENT_REVISION = client.comment("Mallard Guard config format revision. This changes only when settings or their defaults change.")
             .defineInRange("configRevision", CONFIG_REVISION, 0, Integer.MAX_VALUE);
         client.push("display");
-        HUD = client.comment("Show the parry shield by the crosshair.").define("hud", true);
-        SHIELD_EFFECTS = client.comment("Animate the guard icon: a ready outline and parry flashes. Tool blocks flash red, shield blocks emit a short white echo, and the darker icon trembles with repeating echoes while held.").define("shieldEffects", true);
-        SPARKS_ENABLED = client.comment("Show flying sparks and perfect parry stars on this client. Disable without changing your spark settings.").define("sparksEnabled", true);
-        STREAKS_ENABLED = client.comment("Show Streak Lines made from white square dots. The line stretches from the hit center and fades from center to tip; bouncing sparks are separate.").define("streaksEnabled", true);
-        STREAK_REVERSE = client.comment("Reverse the streak gradient while keeping its color proportions: warm/red at the center and white at the tip. Default: false.").define("streakReverse", false);
-        SPARK_RING = client.comment("Off: sparks spray in a rounded sphere. On: four shorter diagonal sprays form a compact X. Fall parries always use the compact X; shield parries have their own sphere/cone setting.").define("sparkRing", false);
-        PARTICLE_FLASHES_ENABLED = client.comment("Show spherical impact flash particles on this client. Disable without changing size, opacity, or lifetime settings.").define("particleFlashesEnabled", true);
-        SCREEN_FLASH = client.comment("Brief white screen flash after parries. Meme flash always uses a full white flash. Blocks never flash.").define("screenFlash", true);
-        PERFECT_ONLY_FLASH = client.comment("When on, the ordinary white screen flash occurs only on perfect parries. Meme flash still shows a white flash for either parry.").define("perfectOnlyFlash", true);
-        PERFECT_ONLY_HITLAG = client.comment("When on, only perfect parries freeze the client screen. 0 hitlag frames disables freezing regardless.").define("perfectOnlyHitlag", true);
-        MEME_FLASH = client.comment("Show one of four full-screen meme images alongside a local meme clip. Both start with the white parry flash after hitlag; the image holds 0.5 seconds and fades over 0.2 seconds. Off by default; blocks never trigger it.").define("memeFlash", false);
-        IMPACT_FRAMES = client.comment("Show one freshly captured rough grayscale impact image after hitlag. Its hold time matches the hitlag frame setting, with a one-frame minimum. 0 disables it, 1 enables it.").defineInRange("impactFrames", 1, 0, 1);
-        IMPACT_PERFECT_ONLY = client.comment("When enabled, only perfect parries show the grayscale impact image. Regular parries skip it. Enabled by default.").define("impactPerfectOnly", true);
-        IMPACT_BRIGHTNESS = client.comment("Brightness of the captured impact image; adjust inside the live preview.").defineInRange("impactBrightness", 400, 0, 400);
-        IMPACT_CONTRAST = client.comment("Contrast of the captured impact image; adjust inside the live preview.").defineInRange("impactContrast", 200, 0, 400);
-        IMPACT_EDGES = client.comment("Darkening of edges in the captured impact image; adjust inside the live preview.").defineInRange("impactEdges", 400, 0, 400);
-        IMPACT_GRAIN = client.comment("Fine roughness in the captured impact image; adjust inside the live preview.").defineInRange("impactGrain", 400, 0, 400);
-        IMPACT_CHROMATIC = client.comment("RGB channel separation in your still impact image. 0 disables it. Adjust in the preview. Default: 400%.").defineInRange("impactChromatic", 400, 0, 400);
-        MOB_IMPACT_BRIGHTNESS = client.comment("Independent brightness when a mob perfectly parries you; used with Adapt off.").defineInRange("mobImpactBrightness", 186, 0, 400);
-        MOB_IMPACT_CONTRAST = client.comment("Independent mob impact contrast, with Adapt off.").defineInRange("mobImpactContrast", 110, 0, 400);
-        MOB_IMPACT_EDGES = client.comment("Independent mob impact edge strength, with Adapt off.").defineInRange("mobImpactEdges", 200, 0, 400);
-        MOB_IMPACT_GRAIN = client.comment("Independent mob impact grain, with Adapt off.").defineInRange("mobImpactGrain", 101, 0, 400);
-        MOB_IMPACT_CHROMATIC = client.comment("Independent mob impact RGB separation, with Adapt off.").defineInRange("mobImpactChromatic", 30, 0, 400);
-        MOB_IMPACT_ADAPT = client.comment("Mob impact images follow your own impact settings. Turn off to customize them independently. Default: true.").define("mobImpactAdapt", true);
-        MOB_IMPACT_INVERT = client.comment("Invert the mob impact image, independently of Adapt. Default: true.").define("mobImpactInvert", true);
-        CHROMATIC_INTENSITY = client.comment("Animated RGB separation after parries. Smoothly expands and settles. 0 disables it. Default: 200%.").defineInRange("chromaticIntensity", 200, 0, 200);
-        CHROMATIC_TICKS = client.comment("Duration of animated RGB separation; changing duration also changes animation speed. Default: 10 ticks.").defineInRange("chromaticTicks", 10, 1, 40);
-        CHROMATIC_PERFECT_ONLY = client.comment("Only perfect parries trigger animated RGB separation when enabled. Off applies it to both parry types. Default: false.").define("chromaticPerfectOnly", false);
-        CHROMATIC_HUD = client.comment("Also separate HUD color channels. Off processes the world view before HUD drawing. Default: true.").define("chromaticHud", true);
-        STAGGER_COMPACT = client.comment("Show one 8x8 stagger icon and a remaining-cell count instead of a row of cells. Default: true.").define("staggerCompact", true);
-        STAGGER_HUD_OFFSET = client.comment("Additional upward offset from the shared health/hunger HUD stacks. Default: 1 pixels.").defineInRange("staggerHudOffset", 1, 0, 100);
+        HUD = client.comment("Show the parry shield by the crosshair.").define("hud", GuardClientSettings.initialFlag(0));
+        SHIELD_EFFECTS = client.comment("Animate the guard icon: a ready outline and parry flashes. Tool blocks flash red, shield blocks emit a short white echo, and the darker icon trembles with repeating echoes while held.").define("shieldEffects", GuardClientSettings.initialFlag(1));
+        SPARKS_ENABLED = client.comment("Show flying sparks and perfect parry stars on this client. Disable without changing your spark settings.").define("sparksEnabled", GuardClientSettings.initialFlag(22));
+        STREAKS_ENABLED = client.comment("Show Streak Lines made from white square dots. The line stretches from the hit center and fades from center to tip; bouncing sparks are separate.").define("streaksEnabled", GuardClientSettings.initialFlag(26));
+        STREAK_REVERSE = client.comment("Reverse the streak gradient while keeping its color proportions: warm/red at the center and white at the tip. Default: false.").define("streakReverse", GuardClientSettings.initialFlag(62));
+        SPARK_RING = client.comment("Off: sparks spray in a rounded sphere. On: four shorter diagonal sprays form a compact X. Fall parries always use the compact X; shield parries have their own sphere/cone setting.").define("sparkRing", GuardClientSettings.initialFlag(25));
+        PARTICLE_FLASHES_ENABLED = client.comment("Show spherical impact flash particles on this client. Disable without changing size, opacity, or lifetime settings.").define("particleFlashesEnabled", GuardClientSettings.initialFlag(23));
+        SCREEN_FLASH = client.comment("Brief white screen flash after parries. Meme flash always uses a full white flash. Blocks never flash.").define("screenFlash", GuardClientSettings.initialFlag(2));
+        PERFECT_ONLY_FLASH = client.comment("When on, the ordinary white screen flash occurs only on perfect parries. Meme flash still shows a white flash for either parry.").define("perfectOnlyFlash", GuardClientSettings.initialFlag(27));
+        PERFECT_ONLY_HITLAG = client.comment("When on, only perfect parries freeze the client screen. 0 hitlag frames disables freezing regardless.").define("perfectOnlyHitlag", GuardClientSettings.initialFlag(28));
+        MEME_FLASH = client.comment("Show one of four full-screen meme images alongside a local meme clip. Both start with the white parry flash after hitlag; the image holds 0.5 seconds and fades over 0.2 seconds. Off by default; blocks never trigger it.").define("memeFlash", GuardClientSettings.initialFlag(24));
+        IMPACT_FRAMES = client.comment("Show one freshly captured rough grayscale impact image after hitlag. Its hold time matches the hitlag frame setting, with a one-frame minimum. 0 disables it, 1 enables it.").defineInRange("impactFrames", GuardClientSettings.initial(34), GuardClientSettings.minimum(34), GuardClientSettings.maximum(34));
+        IMPACT_PERFECT_ONLY = client.comment("When enabled, only perfect parries show the grayscale impact image. Regular parries skip it. Enabled by default.").define("impactPerfectOnly", GuardClientSettings.initialFlag(35));
+        IMPACT_BRIGHTNESS = client.comment("Brightness of the captured impact image; adjust inside the live preview.").defineInRange("impactBrightness", GuardClientSettings.initial(40), GuardClientSettings.minimum(40), GuardClientSettings.maximum(40));
+        IMPACT_CONTRAST = client.comment("Contrast of the captured impact image; adjust inside the live preview.").defineInRange("impactContrast", GuardClientSettings.initial(41), GuardClientSettings.minimum(41), GuardClientSettings.maximum(41));
+        IMPACT_EDGES = client.comment("Darkening of edges in the captured impact image; adjust inside the live preview.").defineInRange("impactEdges", GuardClientSettings.initial(42), GuardClientSettings.minimum(42), GuardClientSettings.maximum(42));
+        IMPACT_GRAIN = client.comment("Fine roughness in the captured impact image; adjust inside the live preview.").defineInRange("impactGrain", GuardClientSettings.initial(43), GuardClientSettings.minimum(43), GuardClientSettings.maximum(43));
+        IMPACT_CHROMATIC = client.comment("RGB channel separation in your still impact image. 0 disables it. Adjust in the preview. Default: 400%.").defineInRange("impactChromatic", GuardClientSettings.initial(50), GuardClientSettings.minimum(50), GuardClientSettings.maximum(50));
+        MOB_IMPACT_BRIGHTNESS = client.comment("Independent brightness when a mob perfectly parries you; used with Adapt off.").defineInRange("mobImpactBrightness", GuardClientSettings.initial(51), GuardClientSettings.minimum(51), GuardClientSettings.maximum(51));
+        MOB_IMPACT_CONTRAST = client.comment("Independent mob impact contrast, with Adapt off.").defineInRange("mobImpactContrast", GuardClientSettings.initial(52), GuardClientSettings.minimum(52), GuardClientSettings.maximum(52));
+        MOB_IMPACT_EDGES = client.comment("Independent mob impact edge strength, with Adapt off.").defineInRange("mobImpactEdges", GuardClientSettings.initial(53), GuardClientSettings.minimum(53), GuardClientSettings.maximum(53));
+        MOB_IMPACT_GRAIN = client.comment("Independent mob impact grain, with Adapt off.").defineInRange("mobImpactGrain", GuardClientSettings.initial(54), GuardClientSettings.minimum(54), GuardClientSettings.maximum(54));
+        MOB_IMPACT_CHROMATIC = client.comment("Independent mob impact RGB separation, with Adapt off.").defineInRange("mobImpactChromatic", GuardClientSettings.initial(55), GuardClientSettings.minimum(55), GuardClientSettings.maximum(55));
+        MOB_IMPACT_ADAPT = client.comment("Mob impact images follow your own impact settings. Turn off to customize them independently. Default: true.").define("mobImpactAdapt", GuardClientSettings.initialFlag(56));
+        MOB_IMPACT_INVERT = client.comment("Invert the mob impact image, independently of Adapt. Default: true.").define("mobImpactInvert", GuardClientSettings.initialFlag(57));
+        CHROMATIC_INTENSITY = client.comment("Animated RGB separation after parries. Smoothly expands and settles. 0 disables it. Default: 200%.").defineInRange("chromaticIntensity", GuardClientSettings.initial(58), GuardClientSettings.minimum(58), GuardClientSettings.maximum(58));
+        CHROMATIC_TICKS = client.comment("Duration of animated RGB separation; changing duration also changes animation speed. Default: 10 ticks.").defineInRange("chromaticTicks", GuardClientSettings.initial(59), GuardClientSettings.minimum(59), GuardClientSettings.maximum(59));
+        CHROMATIC_PERFECT_ONLY = client.comment("Only perfect parries trigger animated RGB separation when enabled. Off applies it to both parry types. Default: false.").define("chromaticPerfectOnly", GuardClientSettings.initialFlag(60));
+        CHROMATIC_HUD = client.comment("Also separate HUD color channels. Off processes the world view before HUD drawing. Default: true.").define("chromaticHud", GuardClientSettings.initialFlag(61));
 
-        HITLAG_FRAMES = client.comment("Hold the captured screen for this many 60 FPS equivalent frames. The impact image, then the local flash, particles and sound follow. Perfect parry retaliation waits for this feedback to finish; disabling hitlag returns damage immediately. 0 disables hitlag but allows a one-frame impact image.").defineInRange("hitlagFrames", 6, 0, 10);
-        FLASH_STRENGTH = client.comment("Strength of the brief screen flash, as a percentage. 0 disables it.").defineInRange("flashStrength", 100, 0, 100);
+        HITLAG_FRAMES = client.comment("Hold the captured screen for this many 60 FPS equivalent frames. The impact image, then the local flash, particles and sound follow. Perfect parry retaliation waits for this feedback to finish; disabling hitlag returns damage immediately. 0 disables hitlag but allows a one-frame impact image.").defineInRange("hitlagFrames", GuardClientSettings.initial(3), GuardClientSettings.minimum(3), GuardClientSettings.maximum(3));
+        FLASH_STRENGTH = client.comment("Strength of the brief screen flash, as a percentage. 0 disables it.").defineInRange("flashStrength", GuardClientSettings.initial(4), GuardClientSettings.minimum(4), GuardClientSettings.maximum(4));
         SCREEN_SHAKE = client.comment("Briefly shake the camera on regular parries, perfect parries, and blocks. Blocks shake most strongly. Client-side only.").define("screenShake", true);
-        SHAKE_STRENGTH = client.comment("Camera shake strength as a percentage. 0 disables it; blocks shake most strongly.").defineInRange("shakeStrength", 100, 0, 100);
-        PREFER_OFFHAND = client.comment("Prefer the offhand when both hands qualify, unless server dual-tool or shield selection rules take priority. Crouching with two eligible non-shield items always uses the offhand. The first-person pose follows the chosen hand; shields keep their vanilla pose.").define("offhandGuardPriority", false);
-        REGULAR_ORB_SIZE = client.comment("Regular spherical flash size as a percentage of the full-size flash. Uses the same scale as perfect flashes. 0 hides this flash.").defineInRange("regularOrbSize", 10, 0, 200);
-        PERFECT_ORB_SIZE = client.comment("Perfect spherical flash size as a percentage of the full-size flash. Uses the same scale as regular flashes. 0 hides this flash.").defineInRange("perfectOrbSize", 30, 0, 200);
-        REGULAR_ORB_OPACITY = client.comment("Opacity of the regular parry flash. 0 hides this flash.").defineInRange("regularOrbOpacity", 100, 0, 100);
-        PERFECT_ORB_OPACITY = client.comment("Opacity of the perfect parry flash. 0 hides this flash.").defineInRange("perfectOrbOpacity", 100, 0, 100);
-        REGULAR_ORB_LIFETIME = client.comment("Regular parry spherical flash lifetime in ticks.").defineInRange("regularOrbLifetime", 5, 1, 12);
-        PERFECT_ORB_LIFETIME = client.comment("Perfect parry spherical flash lifetime in ticks, separate from regular parry.").defineInRange("perfectOrbLifetime", 6, 1, 12);
+        SHAKE_STRENGTH = client.comment("Camera shake strength as a percentage. 0 disables it; blocks shake most strongly.").defineInRange("shakeStrength", GuardClientSettings.initial(5), GuardClientSettings.minimum(5), GuardClientSettings.maximum(5));
+        REGULAR_ORB_SIZE = client.comment("Regular spherical flash size as a percentage of the full-size flash. Uses the same scale as perfect flashes. 0 hides this flash.").defineInRange("regularOrbSize", GuardClientSettings.initial(7), GuardClientSettings.minimum(7), GuardClientSettings.maximum(7));
+        PERFECT_ORB_SIZE = client.comment("Perfect spherical flash size as a percentage of the full-size flash. Uses the same scale as regular flashes. 0 hides this flash.").defineInRange("perfectOrbSize", GuardClientSettings.initial(8), GuardClientSettings.minimum(8), GuardClientSettings.maximum(8));
+        REGULAR_ORB_OPACITY = client.comment("Opacity of the regular parry flash. 0 hides this flash.").defineInRange("regularOrbOpacity", GuardClientSettings.initial(9), GuardClientSettings.minimum(9), GuardClientSettings.maximum(9));
+        PERFECT_ORB_OPACITY = client.comment("Opacity of the perfect parry flash. 0 hides this flash.").defineInRange("perfectOrbOpacity", GuardClientSettings.initial(10), GuardClientSettings.minimum(10), GuardClientSettings.maximum(10));
+        REGULAR_ORB_LIFETIME = client.comment("Regular parry spherical flash lifetime in ticks.").defineInRange("regularOrbLifetime", GuardClientSettings.initial(33), GuardClientSettings.minimum(33), GuardClientSettings.maximum(33));
+        PERFECT_ORB_LIFETIME = client.comment("Perfect parry spherical flash lifetime in ticks, separate from regular parry.").defineInRange("perfectOrbLifetime", GuardClientSettings.initial(36), GuardClientSettings.minimum(36), GuardClientSettings.maximum(36));
         client.pop();
         client.push("animation");
         SIMPLY_SWORDS_NOTICE_SHOWN = client.comment("Whether the Simply Swords keybind notice has already appeared in chat on this client.").define("simplySwordsNoticeShown", false);
-        THIRD_PERSON_ANIMATION = client.comment("Show the simple blocking pose on yourself and other guarding players and humanoid mobs. Off hides this pose for everyone on your client; server guard mechanics do not change.").define("thirdPersonGuardPose", true);
-        FIRST_PERSON_ANIMATION = client.comment("Use Mallard Guard's first-person weapon pose. Disable when another mod animates your hands; shields always use vanilla animation.").define("firstPersonGuardPose", true);
+        THIRD_PERSON_ANIMATION = client.comment("Show the simple blocking pose on yourself and other guarding players and humanoid mobs. Off hides this pose for everyone on your client; server guard mechanics do not change.").define("thirdPersonGuardPose", GuardClientSettings.initialFlag(49));
+        FIRST_PERSON_ANIMATION = client.comment("Use Mallard Guard's first-person weapon pose. Disable when another mod animates your hands; shields always use vanilla animation.").define("firstPersonGuardPose", GuardClientSettings.initialFlag(11));
         client.pop();
+        ModConfigSpec.Builder punchy = new ModConfigSpec.Builder();
+        PUNCHY_REVISION=punchy.comment("Internal config schema revision.").defineInRange("configRevision",CONFIG_REVISION,0,Integer.MAX_VALUE);
+        PUNCHY_COMPAT = punchy.comment("Render eligible guard items through Punchy 2.8b or 2.8d. While Punchy is installed and compatibility enabled, the simple first-person guard animation is disabled. Default: true.").define("enabled", true);
+        PUNCHY_RELEASE_DELAY = GuardSettingRanges.integer(punchy.comment("Extra hold after client hitlag finishes. Releases without hitlag have no extra delay. Applies to every preset. 0 removes the delay. Default: 50 ms."), "releaseDelayMillis", 50, 0, 1000);
+        java.util.List<ModConfigSpec.ConfigValue<String>> poses = new java.util.ArrayList<>();
+        for (int i = 0; i < GuardPoseSettings.COUNT; i++) {
+            poses.add(punchy.comment("Preset " + (i + 1) + ": enabled, active hand position/rotation, supporting hand position/rotation, weapon position/rotation, raise/lower milliseconds, easing curve, easing strength. Positions use tenths of a model pixel; rotations use degrees. Curves: 0 linear, 1 ease in, 2 ease out, 3 ease in/out.")
+                .define("pose" + (i + 1), GuardPoseSettings.encodePose(GuardPoseSettings.defaultPose(i)), value -> value instanceof String text && GuardPoseSettings.parsePose(text) != null));
+        }
+        PUNCHY_POSES = java.util.List.copyOf(poses);
+        PUNCHY_SPEC = punchy.build();
         client.push("audio");
-        LOCAL_MASTER_VOLUME = client.comment("Your own master playback level for Mallard Guard sounds, including the meme clip. 100% is the recorded level before other volume settings; 0% mutes it. Levels above 100% use a louder recording where available.").defineInRange("masterVolume", 100, 0, 200);
-        LOCAL_PARRY_VOLUME = client.comment("Your playback volume for regular parries and regular fall parries and their meme clip; multiplied by the master level.").defineInRange("parryVolume", 65, 0, 200);
-        LOCAL_PERFECT_VOLUME = client.comment("Your playback volume for perfect parries, including shield and enabled perfect fall parries, and their meme clip; multiplied by the master level.").defineInRange("perfectVolume", 130, 0, 200);
-        LOCAL_BLOCK_VOLUME = client.comment("Your playback volume for blocks and regular shield parries; multiplied by the master level.").defineInRange("blockVolume", 65, 0, 200);
+        LOCAL_MASTER_VOLUME = client.comment("Your own master playback level for Mallard Guard sounds, including the meme clip. 100% is the recorded level before other volume settings; 0% mutes it. Levels above 100% use a louder recording where available.").defineInRange("masterVolume", GuardClientSettings.initial(12), GuardClientSettings.minimum(12), GuardClientSettings.maximum(12));
+        LOCAL_PARRY_VOLUME = client.comment("Your playback volume for regular parries and regular fall parries and their meme clip; multiplied by the master level.").defineInRange("parryVolume", GuardClientSettings.initial(13), GuardClientSettings.minimum(13), GuardClientSettings.maximum(13));
+        LOCAL_PERFECT_VOLUME = client.comment("Your playback volume for perfect parries, including shield and enabled perfect fall parries, and their meme clip; multiplied by the master level.").defineInRange("perfectVolume", GuardClientSettings.initial(14), GuardClientSettings.minimum(14), GuardClientSettings.maximum(14));
+        LOCAL_BLOCK_VOLUME = client.comment("Your playback volume for blocks and regular shield parries; multiplied by the master level.").defineInRange("blockVolume", GuardClientSettings.initial(15), GuardClientSettings.minimum(15), GuardClientSettings.maximum(15));
         client.pop();
         client.push("sparks");
-        REGULAR_SPARK_COUNT = client.comment("Regular parry spark count as a percentage of the base burst. 0 hides bouncing sparks.").defineInRange("regularAmount", 100, 0, 200);
-        PERFECT_SPARK_COUNT = client.comment("Perfect parry spark count on the same scale as regular sparks. 0 hides bouncing sparks.").defineInRange("perfectAmount", 170, 0, 200);
-        STAR_COUNT = client.comment("Number of star-shaped sparks on perfect parries; 0 disables stars.").defineInRange("stars", 2, 0, 16);
-        SPARK_LIFETIME = client.comment("Shared lifetime for bouncing sparks and star sparks. 100% is 30 ticks; 0 hides these sparks. Streak Lines have their own lifetime.").defineInRange("lifetime", 100, 0, 200);
-        STREAK_AMOUNT = client.comment("Perfect parry Streak Line count on the same scale as regular streaks. 0 hides them.").defineInRange("streakAmount", 90, 0, 200);
-        REGULAR_STREAK_AMOUNT = client.comment("Regular parry Streak Line count. 100% is the base line count; 0 hides them.").defineInRange("regularStreakAmount", 80, 0, 200);
-        STREAK_LENGTH = client.comment("Streak Line reach as a percentage of the base 3.5–6.75 block range. 0 hides Streak Lines.").defineInRange("streakLength", 80, 0, 200);
-        STREAK_LIFETIME = client.comment("Streak Lines lifetime in ticks; individual square dots shrink and fade from center to tip.").defineInRange("streakLifetime", 30, 2, 40);
-        STREAK_DOT_SIZE = client.comment("Square dot size as a percentage of the base dot size. 0 hides Streak Lines.").defineInRange("streakDotSize", 30, 0, 200);
-        STREAK_STRETCH_SPEED = client.comment("Streak Line reveal speed. 100% is the base speed; 200% is twice as fast. 0 hides Streak Lines.").defineInRange("streakStretchSpeed", 200, 0, 200);
-        STREAK_DOT_SPACING = client.comment("Perfect parry dot spacing on the same scale as regular parry spacing. Lower values pack dots closer.").defineInRange("streakDotSpacing", 20, 1, 200);
-        STREAK_BALLISTIC_CURVE = client.comment("Downward ballistic curvature of Streak Lines. 0% keeps them straight; higher values curve the tip down more while the center stays fixed. Default: 40%.").defineInRange("streakBallisticCurve", 40, 0, 200);
-        REGULAR_STREAK_DOT_SPACING = client.comment("Regular parry dot spacing. Lower values pack dots closer; 1% is the densest setting.").defineInRange("regularStreakDotSpacing", 60, 1, 200);
-        SPARK_LENGTH = client.comment("Moving spark trail length. 100% uses the full trail length; 0 hides the trails without hiding stars.").defineInRange("length", 50, 0, 200);
-        SPARK_EXPLOSIVENESS = client.comment("Outward spark launch speed. 100% uses the base speed; 0 stops the outward burst.").defineInRange("explosiveness", 80, 0, 200);
-        SPARK_REACH = client.comment("Distance before sparks and stars start falling, as a percentage of 1.5 blocks. 10% = 0.15 blocks; 0 drops immediately.").defineInRange("reach", 10, 0, 200);
+        REGULAR_SPARK_COUNT = client.comment("Regular parry spark count as a percentage of the base burst. 0 hides bouncing sparks.").defineInRange("regularAmount", GuardClientSettings.initial(16), GuardClientSettings.minimum(16), GuardClientSettings.maximum(16));
+        PERFECT_SPARK_COUNT = client.comment("Perfect parry spark count on the same scale as regular sparks. 0 hides bouncing sparks.").defineInRange("perfectAmount", GuardClientSettings.initial(17), GuardClientSettings.minimum(17), GuardClientSettings.maximum(17));
+        STAR_COUNT = client.comment("Number of star-shaped sparks on perfect parries; 0 disables stars.").defineInRange("stars", GuardClientSettings.initial(18), GuardClientSettings.minimum(18), GuardClientSettings.maximum(18));
+        SPARK_LIFETIME = client.comment("Shared lifetime for bouncing sparks and star sparks. 100% is 30 ticks; 0 hides these sparks. Streak Lines have their own lifetime.").defineInRange("lifetime", GuardClientSettings.initial(19), GuardClientSettings.minimum(19), GuardClientSettings.maximum(19));
+        STREAK_AMOUNT = client.comment("Perfect parry Streak Line count on the same scale as regular streaks. 0 hides them.").defineInRange("streakAmount", GuardClientSettings.initial(29), GuardClientSettings.minimum(29), GuardClientSettings.maximum(29));
+        REGULAR_STREAK_AMOUNT = client.comment("Regular parry Streak Line count. 100% is the base line count; 0 hides them.").defineInRange("regularStreakAmount", GuardClientSettings.initial(39), GuardClientSettings.minimum(39), GuardClientSettings.maximum(39));
+        STREAK_LENGTH = client.comment("Streak Line reach as a percentage of the base 3.5–6.75 block range. 0 hides Streak Lines.").defineInRange("streakLength", GuardClientSettings.initial(30), GuardClientSettings.minimum(30), GuardClientSettings.maximum(30));
+        STREAK_LIFETIME = client.comment("Streak Lines lifetime in ticks; individual square dots shrink and fade from center to tip.").defineInRange("streakLifetime", GuardClientSettings.initial(31), GuardClientSettings.minimum(31), GuardClientSettings.maximum(31));
+        STREAK_DOT_SIZE = client.comment("Square dot size as a percentage of the base dot size. 0 hides Streak Lines.").defineInRange("streakDotSize", GuardClientSettings.initial(37), GuardClientSettings.minimum(37), GuardClientSettings.maximum(37));
+        STREAK_STRETCH_SPEED = client.comment("Streak Line reveal speed. 100% is the base speed; 200% is twice as fast. 0 hides Streak Lines.").defineInRange("streakStretchSpeed", GuardClientSettings.initial(38), GuardClientSettings.minimum(38), GuardClientSettings.maximum(38));
+        STREAK_DOT_SPACING = client.comment("Perfect parry dot spacing on the same scale as regular parry spacing. Lower values pack dots closer.").defineInRange("streakDotSpacing", GuardClientSettings.initial(45), GuardClientSettings.minimum(45), GuardClientSettings.maximum(45));
+        STREAK_BALLISTIC_CURVE = client.comment("Downward ballistic curvature of Streak Lines. 0% keeps them straight; higher values curve the tip down more while the center stays fixed. Default: 40%.").defineInRange("streakBallisticCurve", GuardClientSettings.initial(48), GuardClientSettings.minimum(48), GuardClientSettings.maximum(48));
+        REGULAR_STREAK_DOT_SPACING = client.comment("Regular parry dot spacing. Lower values pack dots closer; 1% is the densest setting.").defineInRange("regularStreakDotSpacing", GuardClientSettings.initial(46), GuardClientSettings.minimum(46), GuardClientSettings.maximum(46));
+        SPARK_LENGTH = client.comment("Moving spark trail length. 100% uses the full trail length; 0 hides the trails without hiding stars.").defineInRange("length", GuardClientSettings.initial(20), GuardClientSettings.minimum(20), GuardClientSettings.maximum(20));
+        SPARK_EXPLOSIVENESS = client.comment("Outward spark launch speed. 100% uses the base speed; 0 stops the outward burst.").defineInRange("explosiveness", GuardClientSettings.initial(21), GuardClientSettings.minimum(21), GuardClientSettings.maximum(21));
+        SPARK_REACH = client.comment("Distance before sparks and stars start falling, as a percentage of 1.5 blocks. 10% = 0.15 blocks; 0 drops immediately.").defineInRange("reach", GuardClientSettings.initial(44), GuardClientSettings.minimum(44), GuardClientSettings.maximum(44));
+        client.pop();
+        GuardShieldReactions.configure(client);
+        client.push("debug");
+        DEBUG_CLIENT_FLAGS=client.comment("Diagnostic event groups: 1 guard, 2 damage/projectiles, 4 animations, 8 config/sync, 16 mob guard, 32 Punchy reactions, 64 Punchy hand transitions, 128 Punchy item priority. Zero disables diagnostic logging.").defineInRange("logging",0,0,GuardDiagnostics.ALL);
         client.pop();
         CLIENT_SPEC = client.build();
     }
@@ -462,6 +504,7 @@ public final class GuardConfig {
 
     public static void prepareConfigFolders() {
         Path folder = FMLPaths.CONFIGDIR.get().resolve("mallard_guard");
+        GuardPoseLibrary.prepare();
         try {
             Files.createDirectories(folder.resolve("enforce"));
             clearBackups(folder);
@@ -475,7 +518,8 @@ public final class GuardConfig {
                 + "copy the client.toml from your Minecraft installation to this server's\n"
                 + "config/mallard_guard/enforce/ folder. Enable enforcement in game as an OP.\n\n"
                 + "When this template exists, it supplies the Enforce screen's values.\n"
-                + "Applying changes in that screen also updates the copied client.toml.\n"
+                + "For Punchy presets and motion, also copy mg_punchy/config.toml into enforce/mg_punchy/config.toml.\n"
+                + "Applying changes in that screen also updates the copied files.\n"
                 + "The categories marked Don't Enforce still start with these values,\n"
                 + "but players can edit them afterward. The original client file is not changed.\n");
             copyIfAbsent(FMLPaths.CONFIGDIR.get().resolve("mallardguard-client.toml"), folder.resolve("client.toml"));
@@ -511,16 +555,16 @@ public final class GuardConfig {
     public static void clearConfigBackups() {
         Path folder = FMLPaths.CONFIGDIR.get().resolve("mallard_guard");
         clearBackups(folder);
-        clearBackups(folder.resolve("enforce"));
+        clearBackups(folder.resolve("enforce")); clearBackups(folder.resolve("mg_punchy"));
         if (serverConfigFolder != null) clearBackups(serverConfigFolder);
     }
 
     public static void clearBackups(Path folder) {
-        deleteConfigBackups(folder, "(?:client|server)(?:\\.toml)?(?:[-.]\\d+)?(?:\\.toml)?\\.bak");
+        deleteConfigBackups(folder, "(?:client|server|config)(?:\\.toml)?(?:[-.]\\d+)?(?:\\.toml)?\\.bak");
     }
 
     private static void clearLegacyBackups(Path folder) {
-        deleteConfigBackups(folder, "mallardguard-(?:client|server)(?:\\.toml)?(?:[-.]\\d+)?(?:\\.toml)?\\.bak");
+        deleteConfigBackups(folder, "mallardguard-(?:client|server|config)(?:\\.toml)?(?:[-.]\\d+)?(?:\\.toml)?\\.bak");
     }
 
     private static void deleteConfigBackups(Path folder, String pattern) {
@@ -536,7 +580,7 @@ public final class GuardConfig {
     }
 
     public static void onReload(ModConfigEvent.Reloading event) {
-        if (event.getConfig().getSpec() == CLIENT_SPEC || event.getConfig().getSpec() == SERVER_SPEC)
+        if (event.getConfig().getSpec() == CLIENT_SPEC || event.getConfig().getSpec() == SERVER_SPEC || event.getConfig().getSpec() == PUNCHY_SPEC)
             clearBackups(event.getConfig().getFullPath().getParent());
     }
 
@@ -547,6 +591,7 @@ public final class GuardConfig {
     /** Capture existing files before NeoForge validates them, without making backup files. */
     public static void snapshotExistingConfigs() {
         remember(FMLPaths.CONFIGDIR.get().resolve("mallard_guard/client.toml"));
+        remember(FMLPaths.CONFIGDIR.get().resolve("mallard_guard/mg_punchy/config.toml"));
         remember(FMLPaths.CONFIGDIR.get().resolve("mallard_guard/server.toml"));
         Path game = FMLPaths.GAMEDIR.get();
         Path dedicatedProperties = game.resolve("server.properties");
@@ -572,7 +617,7 @@ public final class GuardConfig {
 
     private static void remember(Path path) {
         try {
-            if (Files.isRegularFile(path)) ORIGINAL_FILES.put(path.toAbsolutePath().normalize(), Files.readAllBytes(path));
+            if(Files.isRegularFile(path)&&Files.size(path)<=1_048_576){byte[] bytes=Files.readAllBytes(path);if(revisionIn(bytes)!=CONFIG_REVISION)ORIGINAL_FILES.put(path.toAbsolutePath().normalize(),bytes);}
         } catch (IOException error) {
             System.err.println("Mallard Guard: could not preserve config in memory: " + error.getMessage());
         }
@@ -581,10 +626,13 @@ public final class GuardConfig {
     public static String version() { return currentVersion == null ? "unknown" : currentVersion; }
 
     public static void onLoad(ModConfigEvent.Loading event) {
+        if (event.getConfig().getSpec() == PUNCHY_SPEC) GuardPoseLibrary.loaded();
         ModConfigSpec.IntValue marker;
         if (event.getConfig().getSpec() == SERVER_SPEC) {
             marker = SERVER_REVISION;
             serverConfigFolder = event.getConfig().getFullPath().getParent();
+        } else if (event.getConfig().getSpec() == PUNCHY_SPEC) {
+            marker = PUNCHY_REVISION;
         } else if (event.getConfig().getSpec() == CLIENT_SPEC) {
             marker = CLIENT_REVISION;
         } else return;
@@ -629,6 +677,8 @@ public final class GuardConfig {
         }
     }
 
+    public static void serverClosed(){synchronized(PENDING_UPDATES){PENDING_UPDATES.removeIf(update->update.config().getSpec()==SERVER_SPEC);}serverConfigFolder=null;}
+
     public static int pendingUpdates() {
         synchronized (PENDING_UPDATES) {
             return PENDING_UPDATES.size();
@@ -645,7 +695,7 @@ public final class GuardConfig {
         synchronized (PENDING_UPDATES) {
             List<String> lines = new ArrayList<>();
             for (PendingUpdate update : PENDING_UPDATES) {
-                lines.add(update.config().getSpec() == CLIENT_SPEC ? "Client settings" : "World/server settings");
+                lines.add(update.config().getSpec() == PUNCHY_SPEC ? "Client / Punchy settings" : update.config().getSpec() == CLIENT_SPEC ? "Client settings" : "World/server settings");
                 if (update.changes().isEmpty()) lines.add("Config format changed; settings remain available.");
                 else lines.addAll(update.changes());
             }
@@ -678,8 +728,21 @@ public final class GuardConfig {
                 Set<String> paths = new HashSet<>();
                 collectPaths(spec.getValues(), "", paths);
                 try {
-                    if (!keepOldValues) resetValues(spec.getValues());
+                    if (!keepOldValues) {
+                        resetValues(spec.getValues());
+                        if(spec==CLIENT_SPEC||spec==PUNCHY_SPEC){if(spec==CLIENT_SPEC){resetValues(PUNCHY_SPEC.getValues());PUNCHY_SPEC.save();}var presets=new java.util.ArrayList<>(GuardPoseLibrary.snapshot());if(presets.size()>=GuardPoseSettings.COUNT){for(int i=0;i<GuardPoseSettings.COUNT;i++)presets.set(i,GuardPoseLibrary.preset(i));GuardPoseLibrary.save(presets);}}
+                    }
                     if (keepOldValues && spec == SERVER_SPEC) {
+                        byte[] previous=ORIGINAL_FILES.get(entry.getFullPath().toAbsolutePath().normalize());
+                        if(previous!=null&&revisionIn(previous)<28){
+                            String text=new String(previous,java.nio.charset.StandardCharsets.UTF_8);
+                            var dual=java.util.regex.Pattern.compile("(?m)^\\s*randomDualTools\\s*=\\s*(true|false)\\s*$").matcher(text);
+                            if(dual.find())PARRY_HAND_PRIORITY.set(Boolean.parseBoolean(dual.group(1))?0:2);
+                            var shield=java.util.regex.Pattern.compile("(?m)^\\s*randomShieldWeapon\\s*=\\s*(true|false)\\s*$").matcher(text);
+                            if(shield.find())SHIELD_PARRY_PRIORITY.set(Boolean.parseBoolean(shield.group(1))?0:1);
+                        }
+                        if(previous!=null&&revisionIn(previous)<35&&(CLIENT_EXEMPT_MASK.get()&2)!=0)CLIENT_EXEMPT_MASK.set(CLIENT_EXEMPT_MASK.get()|24);
+                        CLIENT_EXEMPT_MASK.set(CLIENT_EXEMPT_MASK.get() & GuardClientPreset.ALL_CATEGORIES);
                         int[] preset = GuardClientPreset.parse(CLIENT_PRESET.get());
                         if (preset != null) CLIENT_PRESET.set(GuardClientPreset.encode(preset));
                     }
@@ -738,7 +801,7 @@ public final class GuardConfig {
                             PERFECT_ORB_SIZE.set(Math.clamp(Math.round(PERFECT_ORB_SIZE.get() * 0.3F), 0, 200));
                         }
                     }
-                    (spec == CLIENT_SPEC ? CLIENT_REVISION : SERVER_REVISION).set(CONFIG_REVISION);
+                    (spec == CLIENT_SPEC ? CLIENT_REVISION : spec == PUNCHY_SPEC ? PUNCHY_REVISION : SERVER_REVISION).set(CONFIG_REVISION);
                     spec.save();
                     cleanFile(entry, paths);
                     clearBackups(entry.getFullPath().getParent());
@@ -762,7 +825,8 @@ public final class GuardConfig {
     }
 
     private static void resetValues(UnmodifiableConfig entries) {
-        for (Object value : entries.valueMap().values()) {
+        for (var entry : entries.entrySet()) {
+            Object value = entry.getValue();
             if (value instanceof UnmodifiableConfig group) resetValues(group);
             else if (value instanceof ModConfigSpec.ConfigValue<?> setting) resetValue(setting);
         }
@@ -822,7 +886,7 @@ public final class GuardConfig {
     }
 
     private static void collectPaths(UnmodifiableConfig entries, String prefix, Set<String> paths) {
-        for (var entry : entries.valueMap().entrySet()) {
+        for (var entry : entries.entrySet()) {
             String path = prefix + entry.getKey();
             if (entry.getValue() instanceof UnmodifiableConfig group) collectPaths(group, path + ".", paths);
             else if (entry.getValue() instanceof ModConfigSpec.ConfigValue<?>) paths.add(path);
@@ -830,12 +894,13 @@ public final class GuardConfig {
     }
 
     private static void removeStale(Config config, String prefix, Set<String> paths) {
-        for (String key : new ArrayList<>(config.valueMap().keySet())) {
+        for (var entry : new ArrayList<>(config.entrySet())) {
+            String key = entry.getKey();
             String path = prefix + key;
-            Object value = config.valueMap().get(key);
+            Object value = entry.getValue();
             if (value instanceof Config group) {
                 removeStale(group, path + ".", paths);
-                if (group.valueMap().isEmpty()) config.remove(key);
+                if (group.isEmpty()) config.remove(key);
             } else if (!paths.contains(path)) config.remove(key);
         }
     }
@@ -884,21 +949,17 @@ public final class GuardConfig {
         clearConfigBackups();
     }
 
-    public static GuardPackets.Settings snapshot(boolean operator) {
-        return new GuardPackets.Settings(PARRY.get(), BLOCK.get(), false, false, false, PERFECT_TICKS.get(), PARRY_TICKS.get(), RECHARGE_TICKS.get(), FACING_ANGLE.get(), (int) Math.round(BLOCK_REDUCTION.get() * 100.0D), FOLLOW_UP_TICKS.get(), (int) Math.round(PARRY_RETALIATION.get() * 100), (int) Math.round(PERFECT_RETALIATION.get() * 100), PARRY_WEAR.get(), PERFECT_WEAR.get(), BLOCK_WEAR.get(), HIT_SOUNDS.get(), HIT_PARTICLES.get(), MASTER_VOLUME.get(), PERFECT_VOLUME.get(), PARRY_VOLUME.get(), BLOCK_VOLUME.get(), true, FALL_PERFECT_PARRY.get(), FALL_LOOK_DOWN.get(), FALL_BREAK_BLOCKS.get(), FALL_BLAST_STRENGTH.get(), FALL_LAUNCH_POWER.get(), PARRY_EXPLOSIONS.get(), PERFECT_EXPLOSIONS_ONLY.get(), BLOCK_EXPLOSIONS.get(), PARRY_PROJECTILES.get(), BLOCK_PROJECTILES.get(), DEFENDER_KNOCKBACK.get(), KNOCKBACK_STRENGTH.get(), GUARD_MOVEMENT_PERCENT.get(), BLOCK_DEFLECT_CHANCE.get(), ALLOW_ANY_ITEM.get(), ALLOW_USABLE_ITEMS.get(), INCLUDED_ITEMS.get(), EXCLUDED_ITEMS.get(), SHIELD_ITEMS.get(), CONSUMABLE_PRIORITY.get(), operator);
+    private static <T> T read(ModConfigSpec.ConfigValue<T> value, boolean defaults) {
+        return defaults ? value.getDefault() : value.get();
     }
 
-    public static GuardPackets.Settings defaultSnapshot(boolean operator) {
-        return new GuardPackets.Settings(PARRY.getDefault(), BLOCK.getDefault(), false, false, false, PERFECT_TICKS.getDefault(), PARRY_TICKS.getDefault(), RECHARGE_TICKS.getDefault(), FACING_ANGLE.getDefault(), (int) Math.round(BLOCK_REDUCTION.getDefault() * 100.0D), FOLLOW_UP_TICKS.getDefault(), (int) Math.round(PARRY_RETALIATION.getDefault() * 100), (int) Math.round(PERFECT_RETALIATION.getDefault() * 100), PARRY_WEAR.getDefault(), PERFECT_WEAR.getDefault(), BLOCK_WEAR.getDefault(), HIT_SOUNDS.getDefault(), HIT_PARTICLES.getDefault(), MASTER_VOLUME.getDefault(), PERFECT_VOLUME.getDefault(), PARRY_VOLUME.getDefault(), BLOCK_VOLUME.getDefault(), true, FALL_PERFECT_PARRY.getDefault(), FALL_LOOK_DOWN.getDefault(), FALL_BREAK_BLOCKS.getDefault(), FALL_BLAST_STRENGTH.getDefault(), FALL_LAUNCH_POWER.getDefault(), PARRY_EXPLOSIONS.getDefault(), PERFECT_EXPLOSIONS_ONLY.getDefault(), BLOCK_EXPLOSIONS.getDefault(), PARRY_PROJECTILES.getDefault(), BLOCK_PROJECTILES.getDefault(), DEFENDER_KNOCKBACK.getDefault(), KNOCKBACK_STRENGTH.getDefault(), GUARD_MOVEMENT_PERCENT.getDefault(), BLOCK_DEFLECT_CHANCE.getDefault(), ALLOW_ANY_ITEM.getDefault(), ALLOW_USABLE_ITEMS.getDefault(), INCLUDED_ITEMS.getDefault(), EXCLUDED_ITEMS.getDefault(), SHIELD_ITEMS.getDefault(), CONSUMABLE_PRIORITY.getDefault(), operator);
+    public static GuardPackets.Settings snapshot(boolean operator) { return settingsSnapshot(operator, false); }
+    public static GuardPackets.Settings defaultSnapshot(boolean operator) { return settingsSnapshot(operator, true); }
+    private static GuardPackets.Settings settingsSnapshot(boolean operator, boolean defaults) {
+        return new GuardPackets.Settings(read(PARRY, defaults), read(BLOCK, defaults), false, false, false, read(PERFECT_TICKS, defaults), read(PARRY_TICKS, defaults), read(RECHARGE_TICKS, defaults), read(FACING_ANGLE, defaults), (int) Math.round(read(BLOCK_REDUCTION, defaults) * 100.0D), read(FOLLOW_UP_TICKS, defaults), (int) Math.round(read(PARRY_RETALIATION, defaults) * 100), (int) Math.round(read(PERFECT_RETALIATION, defaults) * 100), read(PARRY_WEAR, defaults), read(PERFECT_WEAR, defaults), read(BLOCK_WEAR, defaults), read(HIT_SOUNDS, defaults), read(HIT_PARTICLES, defaults), read(MASTER_VOLUME, defaults), read(PERFECT_VOLUME, defaults), read(PARRY_VOLUME, defaults), read(BLOCK_VOLUME, defaults), true, read(FALL_PERFECT_PARRY, defaults), read(FALL_LOOK_DOWN, defaults), read(FALL_BREAK_BLOCKS, defaults), read(FALL_BLAST_STRENGTH, defaults), read(FALL_LAUNCH_POWER, defaults), read(PARRY_EXPLOSIONS, defaults), read(PERFECT_EXPLOSIONS_ONLY, defaults), read(BLOCK_EXPLOSIONS, defaults), read(PARRY_PROJECTILES, defaults), read(BLOCK_PROJECTILES, defaults), read(DEFENDER_KNOCKBACK, defaults), read(KNOCKBACK_STRENGTH, defaults), read(GUARD_MOVEMENT_PERCENT, defaults), read(BLOCK_DEFLECT_CHANCE, defaults), read(ALLOW_ANY_ITEM, defaults), read(ALLOW_USABLE_ITEMS, defaults), read(INCLUDED_ITEMS, defaults), read(EXCLUDED_ITEMS, defaults), read(SHIELD_ITEMS, defaults), read(CONSUMABLE_PRIORITY, defaults), operator);
     }
 
-    public static GuardPackets.StaggerSettings staggerSnapshot(boolean defaults) {
-        return new GuardPackets.StaggerSettings(defaults ? STAGGER_ENABLED.getDefault() : STAGGER_ENABLED.get(),
-            defaults ? STAGGER_CELLS.getDefault() : STAGGER_CELLS.get(), defaults ? STAGGER_PARRY_LOSS.getDefault() : STAGGER_PARRY_LOSS.get(),
-            defaults ? STAGGER_PERFECT_LOSS.getDefault() : STAGGER_PERFECT_LOSS.get(), defaults ? STAGGER_RESTORE.getDefault() : STAGGER_RESTORE.get(),
-            defaults ? STAGGER_NEAR_TICKS.getDefault() : STAGGER_NEAR_TICKS.get(), defaults ? STAGGER_FAR_TICKS.getDefault() : STAGGER_FAR_TICKS.get(),
-            defaults ? STAGGER_RADIUS.getDefault() : STAGGER_RADIUS.get(), defaults ? STAGGER_STUN_TICKS.getDefault() : STAGGER_STUN_TICKS.get(), defaults ? STAGGER_EXIT_RECOVERY.getDefault() : STAGGER_EXIT_RECOVERY.get());
-    }
+
 
     public static GuardPackets.MobSettings mobSnapshot(boolean defaults) {
         return new GuardPackets.MobSettings(defaults ? MOB_GUARD.getDefault() : MOB_GUARD.get(),
@@ -916,6 +977,7 @@ public final class GuardConfig {
             defaults ? MOB_TACTICAL_SECONDS.getDefault() : MOB_TACTICAL_SECONDS.get(),
             defaults ? MOB_TACTICAL_COOLDOWN.getDefault() : MOB_TACTICAL_COOLDOWN.get(),
             defaults ? MOB_HUMANOID_IDS.getDefault() : MOB_HUMANOID_IDS.get(),
+            defaults ? MOB_BLACKLIST.getDefault() : MOB_BLACKLIST.get(),
             defaults ? MOB_MOVEMENT.getDefault() : MOB_MOVEMENT.get(),
             defaults ? MOB_APPROACH_DISTANCE.getDefault() : MOB_APPROACH_DISTANCE.get(),
             defaults ? MOB_APPROACH_SECONDS.getDefault() : MOB_APPROACH_SECONDS.get(),
@@ -923,29 +985,24 @@ public final class GuardConfig {
             defaults ? MOB_GEAR_CHANCE.getDefault() : MOB_GEAR_CHANCE.get());
     }
 
-    public static GuardPackets.ShieldSettings shieldSnapshot() {
-        return new GuardPackets.ShieldSettings(SHIELD_PERFECT_TICKS.get(), SHIELD_PARRY_TICKS.get(),
-            SHIELD_RECHARGE_TICKS.get(), SHIELD_MAX_BLOCKS.get(), TOOL_MAX_BLOCKS.get(), SHIELD_BREAK_TICKS.get(), SHIELD_CONE_DEGREES.get(), SHIELD_CONE_REACH.get(),
-            SHIELD_RETALIATION_PERCENT.get(), SHIELD_STUN_TICKS.get(), SHIELD_PUSHBACK_PERCENT.get(),
-            SHIELD_PARRY_PUSHBACK_PERCENT.get(), TOOL_PUSHBACK_PERCENT.get(), SHIELD_STUN_BOSSES.get(), CONSUMABLE_PRIORITY.get(), COOLDOWN_PREVENTS_GUARD.get(), ALLOW_EMPTY_HAND.get(), RETALIATION_CAP.get(), SHIELD_RANDOM_HAND.get(), SHIELD_SPARK_CONE.get(), DUAL_TOOL_RANDOM_HAND.get());
-    }
-
-    public static GuardPackets.ShieldSettings defaultShieldSnapshot() {
-        return new GuardPackets.ShieldSettings(SHIELD_PERFECT_TICKS.getDefault(), SHIELD_PARRY_TICKS.getDefault(),
-            SHIELD_RECHARGE_TICKS.getDefault(), SHIELD_MAX_BLOCKS.getDefault(), TOOL_MAX_BLOCKS.getDefault(), SHIELD_BREAK_TICKS.getDefault(), SHIELD_CONE_DEGREES.getDefault(), SHIELD_CONE_REACH.getDefault(),
-            SHIELD_RETALIATION_PERCENT.getDefault(), SHIELD_STUN_TICKS.getDefault(), SHIELD_PUSHBACK_PERCENT.getDefault(),
-            SHIELD_PARRY_PUSHBACK_PERCENT.getDefault(), TOOL_PUSHBACK_PERCENT.getDefault(), SHIELD_STUN_BOSSES.getDefault(), CONSUMABLE_PRIORITY.getDefault(), COOLDOWN_PREVENTS_GUARD.getDefault(), ALLOW_EMPTY_HAND.getDefault(), RETALIATION_CAP.getDefault(), SHIELD_RANDOM_HAND.getDefault(), SHIELD_SPARK_CONE.getDefault(), DUAL_TOOL_RANDOM_HAND.getDefault());
+    public static GuardPackets.ShieldSettings shieldSnapshot() { return shieldSnapshotValues(false); }
+    public static GuardPackets.ShieldSettings defaultShieldSnapshot() { return shieldSnapshotValues(true); }
+    private static GuardPackets.ShieldSettings shieldSnapshotValues(boolean defaults) {
+        return new GuardPackets.ShieldSettings(read(SHIELD_PERFECT_TICKS, defaults), read(SHIELD_PARRY_TICKS, defaults),
+            read(SHIELD_RECHARGE_TICKS, defaults), read(SHIELD_MAX_BLOCKS, defaults), read(TOOL_MAX_BLOCKS, defaults), read(SHIELD_BREAK_TICKS, defaults), read(SHIELD_CONE_DEGREES, defaults), read(SHIELD_CONE_REACH, defaults),
+            read(SHIELD_RETALIATION_PERCENT, defaults), read(SHIELD_STUN_TICKS, defaults), read(SHIELD_PUSHBACK_PERCENT, defaults),
+            read(SHIELD_PARRY_PUSHBACK_PERCENT, defaults), read(TOOL_PUSHBACK_PERCENT, defaults), read(SHIELD_STUN_BOSSES, defaults), read(CONSUMABLE_PRIORITY, defaults), read(COOLDOWN_PREVENTS_GUARD, defaults), read(ALLOW_EMPTY_HAND, defaults), read(RETALIATION_CAP, defaults), read(SHIELD_PARRY_PRIORITY, defaults), read(SHIELD_SPARK_CONE, defaults), read(PARRY_HAND_PRIORITY, defaults), read(FORCE_CROUCH_OFFHAND, defaults), read(SHIELD_BLACKLIST, defaults));
     }
 
     public static void applyShield(GuardPackets.ShieldSettings data) {
-        DUAL_TOOL_RANDOM_HAND.set(data.randomDualTools());
+        PARRY_HAND_PRIORITY.set(data.parryHandPriority()); FORCE_CROUCH_OFFHAND.set(data.forceCrouchOffhand()); SHIELD_BLACKLIST.set(data.shieldBlacklist());
         SHIELD_PERFECT_TICKS.set(data.perfect()); SHIELD_PARRY_TICKS.set(data.window());
         SHIELD_RECHARGE_TICKS.set(data.rechargeTicks()); SHIELD_MAX_BLOCKS.set(data.maxBlocks()); TOOL_MAX_BLOCKS.set(data.toolMaxBlocks()); SHIELD_BREAK_TICKS.set(data.breakTicks());
         SHIELD_CONE_DEGREES.set(data.cone()); SHIELD_CONE_REACH.set(data.reach()); SHIELD_RETALIATION_PERCENT.set(data.retaliation());
         SHIELD_STUN_TICKS.set(data.stunTicks()); SHIELD_PUSHBACK_PERCENT.set(data.perfectPushback());
         SHIELD_PARRY_PUSHBACK_PERCENT.set(data.regularPushback()); TOOL_PUSHBACK_PERCENT.set(data.weaponPushback());
         SHIELD_STUN_BOSSES.set(data.stunnableBosses()); CONSUMABLE_PRIORITY.set(data.consumablePriority()); COOLDOWN_PREVENTS_GUARD.set(data.cooldownPreventsGuard()); ALLOW_EMPTY_HAND.set(data.allowEmptyHand()); RETALIATION_CAP.set(data.retaliationCap());
-        SHIELD_RANDOM_HAND.set(data.randomShieldWeapon()); SHIELD_SPARK_CONE.set(data.coneSparks());
+        SHIELD_PARRY_PRIORITY.set(data.shieldParryPriority()); SHIELD_SPARK_CONE.set(data.coneSparks());
         SERVER_SPEC.save();
         clearConfigBackups();
     }

@@ -3,16 +3,13 @@ package dev.zeli.mallardguard.client;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import dev.zeli.mallardguard.MallardGuard;
-import dev.zeli.mallardguard.GuardItemRules;
 import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.mixin.client.ItemInHandRendererAccessor;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
@@ -30,9 +27,10 @@ public final class GuardAnimationHandler {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
         if (player == null || !GuardConfig.FIRST_PERSON_ANIMATION.get() || event.getHand() != GuardClient.guardHand(player)) return;
+        if (PunchyGuardCompat.installed() && GuardConfig.PUNCHY_COMPAT.get() || PunchyGuardCompat.shouldTakeOver()) return;
         ItemStack stack = event.getItemStack();
         // Let shield-like items keep their own first-person animation in every phase.
-        if (stack.isEmpty() || GuardItemRules.shieldLike(stack) || !GuardClient.isCurrentGuardHand(stack)) return;
+        if (stack.isEmpty() || GuardClient.shieldLike(stack) || !GuardClient.isCurrentGuardHand(stack)) return;
 
         ItemInHandRenderer renderer = minecraft.getEntityRenderDispatcher().getItemInHandRenderer();
         HumanoidArm arm = event.getHand() == InteractionHand.MAIN_HAND ? player.getMainArm() : player.getMainArm().getOpposite();

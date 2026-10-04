@@ -8,6 +8,10 @@ version = mod_version
 base { archivesName = 'mallardguard' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs.addAll(['-Xlint:deprecation', '-Xlint:removal'])
+}
+
 neoForge {
     version = neo_version
     runs {

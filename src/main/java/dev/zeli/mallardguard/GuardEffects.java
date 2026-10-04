@@ -17,6 +17,8 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class GuardEffects {
     // Track the last two actual clips for each player, across all guard outcomes.
     private static final Map<net.minecraft.world.entity.LivingEntity, int[]> LAST_SOUNDS = new WeakHashMap<>();
+    public static void clearSession(){LAST_SOUNDS.clear();}
+
     private GuardEffects() {}
 
     public static void forget(ServerPlayer player) {
@@ -28,15 +30,13 @@ public final class GuardEffects {
     }
 
     public static void onHit(ServerPlayer player, DamageSource source, GuardState.Result result, Vec3 impactDirection) {
-        if (result != GuardState.Result.BLOCK && source.getEntity() instanceof ServerPlayer attacker && attacker != player) {
-            GuardStagger.parried(attacker, result == GuardState.Result.PERFECT);
-        }
+        if(result!=GuardState.Result.BLOCK && source.getEntity() instanceof ServerPlayer attacker && attacker!=player)
+            PacketDistributor.sendToPlayer(attacker,new GuardPackets.MobCounter(result==GuardState.Result.PERFECT));
         emit(player, source, result, impactDirection, GuardState.shieldGuard(player), GuardState.emptyHandGuard(player));
     }
 
     public static void onMobHit(net.minecraft.world.entity.Mob mob, DamageSource source, GuardState.Result result, boolean shield) {
         if (result != GuardState.Result.BLOCK && source.getEntity() instanceof ServerPlayer attacker) {
-            GuardStagger.parried(attacker, result == GuardState.Result.PERFECT);
             PacketDistributor.sendToPlayer(attacker, new GuardPackets.MobCounter(result == GuardState.Result.PERFECT));
         }
         emit(mob, source, result, null, shield, false);

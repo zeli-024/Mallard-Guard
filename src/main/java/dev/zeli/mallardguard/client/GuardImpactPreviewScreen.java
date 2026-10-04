@@ -11,11 +11,9 @@ import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL30;
 
 /** Preview an actual captured scene before committing impact-image settings. */
-final class GuardImpactPreviewScreen extends Screen {
+final class GuardImpactPreviewScreen extends GuardPreviewScreen {
     private final Screen parent;
     private final Consumer<int[]> accept;
     private final boolean editable;
@@ -26,30 +24,35 @@ final class GuardImpactPreviewScreen extends Screen {
     private boolean capturePending = true;
     private boolean shaderAvailable = true;
 
+    private int[] saved;
+
+
+
+    private void apply(boolean close){accept.accept(values.clone());if(parent instanceof GuardConfigScreen config&&!config.applyExternalChanges())return;saved=values.clone();Minecraft.getInstance().setScreen(close?parent:this);}
     private boolean mob;
     private int panelWidth, left, top, rowGap, panelHeight;
     private static final String[] NAMES = {"Brightness", "Contrast", "Dark outlines", "Grain", "Chromatic aberration"};
     GuardImpactPreviewScreen(Screen parent, int[] values, boolean editable, Consumer<int[]> accept) {
-        super(Component.literal("Impact frame preview"));
-        this.parent = parent; this.accept = accept; this.editable = editable; this.values = values.clone();
+        super("Impact frame preview");
+        this.parent = parent; this.accept = accept; this.editable = editable; this.values = values.clone(); saved=this.values.clone();
     }
     private int slot(int index) { return mob ? 51 + index : index == 4 ? 50 : 40 + index; }
     @Override protected void init() {
         buttons.clear(); buttonTips.clear();
         panelWidth = Math.min(420, Math.max(120, width - 20)); left = (width - panelWidth) / 2;
-        rowGap = Math.min(23, Math.max(10, (height - 98) / 5)); panelHeight = 94 + rowGap * 5;
-        top = Math.max(0, height - panelHeight - 4);
+        rowGap = Math.min(23, Math.max(10, (height - 124) / 5)); panelHeight = 118 + rowGap * 5;
+        top = Math.max(3, (height - panelHeight) / 2);
         int half = (panelWidth - 18) / 2;
-        buttons.add(addRenderableWidget(Button.builder(Component.literal("Your parry"), b -> { mob = false; rebuild(); })
+        buttons.add(addRenderableWidget(GuardUi.builder(Component.literal("Your parry"), b -> { mob = false; rebuild(); })
             .bounds(left + 6, top + 22, half, 18).build()));
-        buttons.add(addRenderableWidget(Button.builder(Component.literal("Mob parry"), b -> { mob = true; rebuild(); })
+        buttons.add(addRenderableWidget(GuardUi.builder(Component.literal("Mob parry"), b -> { mob = true; rebuild(); })
             .bounds(left + 12 + half, top + 22, half, 18).build()));
         buttons.get(mob ? 1 : 0).active = false;
         if (mob) {
-            Button adapt = addRenderableWidget(Button.builder(Component.literal("Adapt: " + (values[56] != 0 ? "On" : "Off")), b -> { values[56] = values[56] == 0 ? 1 : 0; rebuild(); })
+            Button adapt = addRenderableWidget(GuardUi.builder(Component.literal("Adapt: " + (values[56] != 0 ? "On" : "Off")), b -> {  values[56] = values[56] == 0 ? 1 : 0;rebuild(); })
                 .bounds(left + 6, top + 43, half, 18).build()); adapt.active = editable; buttons.add(adapt);
             buttonTips.put(adapt, "Follow your parry impact settings instead of independent mob settings. Default: On.");
-            Button invert = addRenderableWidget(Button.builder(Component.literal("Invert: " + (values[57] != 0 ? "On" : "Off")), b -> { values[57] = values[57] == 0 ? 1 : 0; rebuild(); })
+            Button invert = addRenderableWidget(GuardUi.builder(Component.literal("Invert: " + (values[57] != 0 ? "On" : "Off")), b -> {  values[57] = values[57] == 0 ? 1 : 0;rebuild(); })
                 .bounds(left + 12 + half, top + 43, half, 18).build()); invert.active = editable; buttons.add(invert);
             buttonTips.put(invert, "Invert the mob impact filter. Works independently of Adapt. Default: On.");
         }
@@ -64,16 +67,16 @@ final class GuardImpactPreviewScreen extends Screen {
                 NAMES[i] + ": 0–400%. Default: " + dev.zeli.mallardguard.GuardClientPreset.DEFAULTS[slot(i)] + "%."
                 + (mob ? " Adapt follows your parry settings; turn it off for independent sliders. Invert is independent." : " Changes are saved by Apply on the main config screen."))));
         }
-        Button done = addRenderableWidget(Button.builder(Component.literal("Use these values"), b -> {
-            accept.accept(values.clone()); Minecraft.getInstance().setScreen(parent);
-        }).bounds(left + 6, top + panelHeight - 25, half, 20).build()); done.active = editable; buttons.add(done);
-        buttons.add(addRenderableWidget(Button.builder(Component.literal("Back"), b -> onClose())
-            .bounds(left + 12 + half, top + panelHeight - 25, half, 20).build()));
+        int bw=(panelWidth-24)/3;
+        Button reset=addRenderableWidget(GuardUi.button("Reset",left+6,top+panelHeight-25,bw,20,()->GuardUi.confirm(this,"Reset impact values?","Restore both impact screens to their defaults.",()->{for(int i=40;i<=43;i++)values[i]=dev.zeli.mallardguard.GuardClientPreset.DEFAULTS[i];for(int i=50;i<=57;i++)values[i]=dev.zeli.mallardguard.GuardClientPreset.DEFAULTS[i];})));reset.active=editable;buttons.add(reset);
+        Button apply=addRenderableWidget(GuardUi.button("Apply",left+12+bw,top+panelHeight-25,bw,20,()->GuardUi.apply(this,()->apply(false),()->apply(true))));apply.active=editable;buttons.add(apply);
+        buttons.add(addRenderableWidget(GuardUi.button("Close",left+18+2*bw,top+panelHeight-25,bw,20,this::onClose)));
+        visibilityButton();buttons.add(visibility);
     }
     private void rebuild() { clearWidgets(); init(); }
 
     @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        RenderTarget target = Minecraft.getInstance().getMainRenderTarget();
+        graphics.flush();RenderTarget target = Minecraft.getInstance().getMainRenderTarget();
         if (target.width > 0 && target.height > 0) {
             if (scene == null || scene.width != target.width || scene.height != target.height) {
                 if (scene != null) scene.destroyBuffers();
@@ -90,6 +93,8 @@ final class GuardImpactPreviewScreen extends Screen {
             shaderAvailable = GuardImpactFrame.draw(scene, target, values[base], values[base + 1], values[base + 2], values[base + 3], chromatic, mob && values[57] != 0);
             if (!shaderAvailable) copy(scene, target);
         }
+        beginPreview(graphics);
+        {
         graphics.fill(left - 2, top, left + panelWidth + 2, top + panelHeight, 0xED211B2A);
         graphics.fill(left - 2, top, left + panelWidth + 2, top + 1, 0xFF947D9A);
         graphics.drawCenteredString(font, "IMPACT PREVIEW", width / 2, top + 7, 0xFFF5F0F6);
@@ -101,48 +106,28 @@ final class GuardImpactPreviewScreen extends Screen {
         }
         if (!shaderAvailable) graphics.drawCenteredString(font, "Impact filter unavailable on this renderer", width / 2,
             Math.max(3, top - 18), 0xFFFFAAAA);
-        for (var widget : renderables) if (!(widget instanceof Button)) widget.render(graphics, mouseX, mouseY, delta);
-        for (Button button : buttons) {
-            int x = button.getX(), y = button.getY(), w = button.getWidth(), h = button.getHeight();
-            int edge = button.active && button.isMouseOver(mouseX, mouseY) ? 0xFFD8BEAA : 0xFF947D9A;
-            graphics.fill(x, y, x + w, y + h, edge);
-            graphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, button.active ? 0xFF372D42 : 0xFF292431);
-            graphics.drawCenteredString(font, button.getMessage(), x + w / 2, y + (h - 8) / 2,
-                button.active ? 0xFFF5F0F6 : 0xFF978C9E);
         }
-        for (var entry : buttonTips.entrySet()) if (entry.getKey().isMouseOver(mouseX, mouseY)) {
+        for (var widget : renderables) if (!(widget instanceof Button) && (!(widget instanceof net.minecraft.client.gui.components.AbstractWidget a) || a.visible)) widget.render(graphics, mouseX, mouseY, delta);
+        for (Button button : buttons) {
+            if (!button.visible) continue;
+            GuardUi.paint(graphics,button,mouseX,mouseY,false,false);
+        }
+        for (var entry : buttonTips.entrySet()) if (entry.getKey().visible && entry.getKey().isMouseOver(mouseX, mouseY)) {
             graphics.renderTooltip(font, font.split(Component.literal(entry.getValue()), Math.min(300, width - 24)), mouseX, mouseY);
             break;
         }
-    }
-
-    private static void copy(RenderTarget source, RenderTarget destination) {
-        int read = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
-        int draw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-        boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-        if (scissor) GL11.glDisable(GL11.GL_SCISSOR_TEST);
-        try {
-            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, source.frameBufferId);
-            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, destination.frameBufferId);
-            GL30.glBlitFramebuffer(0, 0, source.width, source.height,
-                0, 0, destination.width, destination.height, GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
-        } finally {
-            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, read);
-            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, draw);
-            if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        }
+        endPreview(graphics);
     }
 
     @Override public void removed() {
         if (scene != null) scene.destroyBuffers();
-        scene = null;
+        scene = null; super.removed();
     }
 
-    @Override public void onClose() {
-        Minecraft.getInstance().setScreen(parent);
-    }
+    @Override public void onClose() {if(!java.util.Arrays.equals(values,saved))GuardUi.choices(this,"Unsaved impact changes","Apply these values or discard edits.",new GuardUi.Choice("Apply & Close",()->apply(true)),new GuardUi.Choice("Discard",()->Minecraft.getInstance().setScreen(parent)),new GuardUi.Choice("Go Back",()->Minecraft.getInstance().setScreen(this)));else Minecraft.getInstance().setScreen(parent);}
 
-    private static final class ImpactSlider extends AbstractSliderButton {
+
+    private final class ImpactSlider extends AbstractSliderButton {
         private final Consumer<Integer> change;
 
         ImpactSlider(int x, int y, int width, int height, int current, Consumer<Integer> change) {
@@ -151,18 +136,19 @@ final class GuardImpactPreviewScreen extends Screen {
             updateMessage();
         }
 
+        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y))return false;value=Math.clamp(value+Math.signum(sy)*(hasShiftDown()?10:1)/400.0D,0,1);applyValue();updateMessage();return true;}
         @Override protected void updateMessage() {
             setMessage(Component.literal(Math.round(value * 400) + "%"));
         }
 
         @Override protected void applyValue() {
-            change.accept((int) Math.round(value * 400));
+            valueChanged();change.accept((int) Math.round(value * 400));
         }
 
         @Override public void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
             int x = getX(), y = getY(), w = getWidth(), h = getHeight();
             graphics.fill(x, y, x + w, y + h, isHoveredOrFocused() ? 0xFFD8BEAA : 0xFF947D9A);
-            graphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0xFF372D42);
+            graphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0xA0372D42);
             int offset = (int) Math.round(value * (w - 10));
             graphics.fill(x + 4, y + h - 5, x + w - 4, y + h - 3, 0xFF776581);
             graphics.fill(x + 4, y + h - 5, x + 4 + offset, y + h - 3, 0xFFD8BEAA);

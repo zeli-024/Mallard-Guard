@@ -16,7 +16,7 @@ import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
-import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.util.Mth;
@@ -42,7 +42,7 @@ public final class GuardSparkParticle extends TextureSheetParticle {
     // Sodium 0.8.x replaces the normal particle batch. Keep the physics in
     // ParticleEngine and draw both streaks and star sprites as world geometry.
     private static final Set<GuardSparkParticle> SPARKS = Collections.newSetFromMap(new IdentityHashMap<>());
-    private static final RenderType SPARK_RENDER_TYPE = RenderType.entityTranslucent(TextureAtlas.LOCATION_PARTICLES);
+    private static final RenderType SPARK_RENDER_TYPE = RenderType.entityTranslucent(ResourceLocation.withDefaultNamespace("textures/atlas/particles.png"));
     private final SpriteSet sprites;
     private final boolean flash;
     private final boolean stationaryDots;
@@ -57,6 +57,7 @@ public final class GuardSparkParticle extends TextureSheetParticle {
     private final float[] ballisticPath;
     private final float crossX, crossZ;
     private double olderX, olderY, olderZ;
+    private long lastTick;
     private int bounces;
     private int groundedTicks;
     private final float normalGravity;
@@ -181,7 +182,10 @@ public final class GuardSparkParticle extends TextureSheetParticle {
         return velocity * 0.5D + (random.nextDouble() * 3.0D - 1.5D) * 0.05D * (random.nextFloat() > 0.95F ? 2.0D : 1.0D);
     }
 
+    public static void clear() { SPARKS.clear(); }
+
     @Override public void tick() {
+        lastTick = level.getGameTime();
         olderX = xo; olderY = yo; olderZ = zo;
         double falling = yd;
         if (!stationaryDots) {
@@ -238,6 +242,10 @@ public final class GuardSparkParticle extends TextureSheetParticle {
         Vector3f right = new Vector3f(1, 0, 0).rotate(camera.rotation());
         Vector3f up = new Vector3f(0, 1, 0).rotate(camera.rotation());
         float fadeSpan = Math.max(0.1F, lifetime - stretch);
+        boolean reverse = GuardConfig.STREAK_REVERSE.get();
+        float tintRed = (tint >> 16 & 255) / 255.0F;
+        float tintGreen = (tint >> 8 & 255) / 255.0F;
+        float tintBlue = (tint & 255) / 255.0F;
         for (int dot = 0; dot < dotCount; dot++) {
             float fraction = (dot + 1.0F) / dotCount;
             if (fraction > progress) break;
@@ -266,14 +274,14 @@ public final class GuardSparkParticle extends TextureSheetParticle {
                 cz = (float) (hitPosition.z - camera.getPosition().z) + glideDirection.z * glide;
             }
             rCol = 1.0F;
-            float colorPosition = GuardConfig.STREAK_REVERSE.get() ? 1 - fraction : fraction;
+            float colorPosition = reverse ? 1 - fraction : fraction;
             float warmTip = Math.clamp((colorPosition - 0.64F) / 0.36F, 0.0F, 1.0F);
             gCol = 1.0F - 0.27F * warmTip;
             bCol = 1.0F - 0.70F * warmTip;
             if (tint >= 0) {
-                rCol = 1.0F + (((tint >> 16 & 255) / 255.0F) - 1.0F) * warmTip;
-                gCol = 1.0F + (((tint >> 8 & 255) / 255.0F) - 1.0F) * warmTip;
-                bCol = 1.0F + (((tint & 255) / 255.0F) - 1.0F) * warmTip;
+                rCol = 1.0F + (tintRed - 1.0F) * warmTip;
+                gCol = 1.0F + (tintGreen - 1.0F) * warmTip;
+                bCol = 1.0F + (tintBlue - 1.0F) * warmTip;
             }
             float rx = right.x * size, ry = right.y * size, rz = right.z * size;
             float ux = up.x * size, uy = up.y * size, uz = up.z * size;
@@ -316,15 +324,16 @@ public final class GuardSparkParticle extends TextureSheetParticle {
     }
 
     private void crossedFace(VertexConsumer vertices, Vector3f head, Vector3f tail, Vector3f side, int light) {
-        face(vertices, head, tail, side, light);
-        face(vertices, head, tail, new Vector3f(side).negate(), light);
+        face(vertices, head, tail, side, 1, light);
+        face(vertices, head, tail, side, -1, light);
     }
 
-    private void face(VertexConsumer vertices, Vector3f head, Vector3f tail, Vector3f side, int light) {
-        vertex(vertices, new Vector3f(head).sub(side), getU0(), getV1(), light);
-        vertex(vertices, new Vector3f(tail).sub(side), getU0(), getV0(), light);
-        vertex(vertices, new Vector3f(tail).add(side), getU1(), getV0(), light);
-        vertex(vertices, new Vector3f(head).add(side), getU1(), getV1(), light);
+    private void face(VertexConsumer vertices, Vector3f head, Vector3f tail, Vector3f side, int sign, int light) {
+        float sx = side.x * sign, sy = side.y * sign, sz = side.z * sign;
+        vertexAt(vertices, head.x - sx, head.y - sy, head.z - sz, getU0(), getV1(), light);
+        vertexAt(vertices, tail.x - sx, tail.y - sy, tail.z - sz, getU0(), getV0(), light);
+        vertexAt(vertices, tail.x + sx, tail.y + sy, tail.z + sz, getU1(), getV0(), light);
+        vertexAt(vertices, head.x + sx, head.y + sy, head.z + sz, getU1(), getV1(), light);
     }
 
     private void vertex(VertexConsumer vertices, Vector3f point, float u, float v, int light) {
@@ -352,7 +361,8 @@ public final class GuardSparkParticle extends TextureSheetParticle {
     public static void renderSparks(RenderLevelStageEvent event) {
         if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES || SPARKS.isEmpty()) return;
         ClientLevel currentLevel = Minecraft.getInstance().level;
-        SPARKS.removeIf(spark -> !spark.isAlive() || spark.level != currentLevel);
+        SPARKS.removeIf(spark -> !spark.isAlive() || spark.level != currentLevel
+            || currentLevel.getGameTime() - spark.lastTick > 2);
         if (SPARKS.isEmpty()) return;
 
         // The streak vertices are camera-relative. Rendering them through an

@@ -29,6 +29,10 @@ jobs:
             exit 0
           fi
           mod_version="$(sed -n 's/^mod_version=//p' gradle.properties)"
+          release_type=release
+          case "$mod_version" in
+            *beta*|*[a-z]) release_type=beta ;;
+          esac
           jar="build/libs/mallardguard-${mod_version}.jar"
           test -f "$jar"
           notes="release-notes/${mod_version}.md"
@@ -37,7 +41,7 @@ jobs:
           else
             changelog="$(git log -1 --pretty=%B)"
           fi
-          metadata="$(CHANGELOG="$changelog" python3 -c 'import json, os; print(json.dumps({"changelog": os.environ["CHANGELOG"], "changelogType": "text", "gameVersionNames": ["1.21.1", "NeoForge", "Java 21", "Client", "Server"], "releaseType": "release"}))')"
+          metadata="$(CHANGELOG="$changelog" RELEASE_TYPE="$release_type" python3 -c 'import json, os; print(json.dumps({"changelog": os.environ["CHANGELOG"], "changelogType": "text", "gameVersionNames": ["1.21.1", "NeoForge", "Java 21", "Client", "Server"], "releaseType": os.environ["RELEASE_TYPE"]}))')"
           curl --fail-with-body --silent --show-error \
             -H "X-Api-Token: $CF_API_TOKEN" \
             --form-string "metadata=$metadata" \

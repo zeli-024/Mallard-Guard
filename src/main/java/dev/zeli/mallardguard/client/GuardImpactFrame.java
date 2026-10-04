@@ -22,6 +22,7 @@ final class GuardImpactFrame {
     private static final String FRAGMENT = """
         #version 150
         uniform sampler2D scene;
+        uniform sampler2D clean;
         uniform vec2 dimensions;
         uniform float brightness;
         uniform float contrast;
@@ -57,6 +58,14 @@ final class GuardImpactFrame {
             return invert == 1 ? 1.0 - ink : ink;
         }
         void main() {
+            if (colorMode == 3) { result = mix(texture(clean, uv), texture(scene, uv), chromatic); return; }
+            if (colorMode == 2) {
+                vec2 stepSize = vec2(5.0) / dimensions;
+                vec3 blurred = texture(scene, uv).rgb * 0.20;
+                for (int x = -1; x <= 1; x++) for (int y = -1; y <= 1; y++)
+                    if (x != 0 || y != 0) blurred += texture(scene, clamp(uv + vec2(x,y) * stepSize, vec2(0.0), vec2(1.0))).rgb * 0.10;
+                result = vec4(blurred, 1.0); return;
+            }
             vec2 shift = (uv - 0.5) * chromatic * 0.012;
             vec2 redUV = clamp(uv + shift, vec2(0.0), vec2(1.0));
             vec2 blueUV = clamp(uv - shift, vec2(0.0), vec2(1.0));
@@ -67,7 +76,7 @@ final class GuardImpactFrame {
         """;
     private static int program;
     private static int vertexArray;
-    private static int uniformScene, uniformInvert, uniformColorMode, uniformChromatic, uniformDimensions, uniformBrightness, uniformContrast, uniformEdges, uniformRoughness;
+    private static int uniformClean, uniformScene, uniformInvert, uniformColorMode, uniformChromatic, uniformDimensions, uniformBrightness, uniformContrast, uniformEdges, uniformRoughness;
     private static boolean unavailable;
 
     private GuardImpactFrame() {}
@@ -86,12 +95,18 @@ final class GuardImpactFrame {
     }
 
     static boolean draw(RenderTarget source, RenderTarget destination, int brightness, int contrast, int edges, int roughness, int chromatic, boolean invert) {
-        return render(source, destination, brightness, contrast, edges, roughness, chromatic / 100.0F, invert, false);
+        return render(source, destination, brightness, contrast, edges, roughness, chromatic / 100.0F, invert, 0, null);
     }
     static boolean drawChromatic(RenderTarget source, RenderTarget destination, float strength) {
-        return render(source, destination, 100, 100, 0, 0, strength, false, true);
+        return render(source, destination, 100, 100, 0, 0, strength, false, 1, null);
     }
-    private static boolean render(RenderTarget source, RenderTarget destination, int brightness, int contrast, int edges, int roughness, float chromatic, boolean invert, boolean colorMode) {
+    static boolean drawBlur(RenderTarget source, RenderTarget destination) {
+        return render(source, destination, 100, 100, 0, 0, 1, false, 2, null);
+    }
+    static boolean drawMix(RenderTarget source, RenderTarget clean, RenderTarget destination, float opacity) {
+        return render(source, destination, 100, 100, 0, 0, opacity, false, 3, clean);
+    }
+    private static boolean render(RenderTarget source, RenderTarget destination, int brightness, int contrast, int edges, int roughness, float chromatic, boolean invert, int colorMode, RenderTarget clean) {
         if (!ensureShader()) return false;
         int previousRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
         int previousDraw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
@@ -105,6 +120,9 @@ final class GuardImpactFrame {
         boolean blend = GL11.glIsEnabled(GL11.GL_BLEND);
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
         int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL13.glActiveTexture(GL13.GL_TEXTURE1);
+        int previousClean = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
         try {
             GL11.glDisable(GL11.GL_SCISSOR_TEST);
             GL11.glDisable(GL11.GL_DEPTH_TEST);
@@ -115,8 +133,9 @@ final class GuardImpactFrame {
             GL30.glBindVertexArray(vertexArray);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, source.getColorTextureId());
             GL20.glUniform1i(uniformScene, 0);
+            if (clean != null) { GL13.glActiveTexture(GL13.GL_TEXTURE1); GL11.glBindTexture(GL11.GL_TEXTURE_2D, clean.getColorTextureId()); GL20.glUniform1i(uniformClean, 1); GL13.glActiveTexture(GL13.GL_TEXTURE0); }
             GL20.glUniform1i(uniformInvert, invert ? 1 : 0);
-            GL20.glUniform1i(uniformColorMode, colorMode ? 1 : 0);
+            GL20.glUniform1i(uniformColorMode, colorMode);
             GL20.glUniform1f(uniformChromatic, chromatic);
             GL20.glUniform2f(uniformDimensions, destination.width, destination.height);
             GL20.glUniform1f(uniformBrightness, brightness / 100.0F);
@@ -127,6 +146,7 @@ final class GuardImpactFrame {
             return true;
         } finally {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
+            GL13.glActiveTexture(GL13.GL_TEXTURE1); GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousClean);
             GL13.glActiveTexture(previousTextureUnit);
             GL30.glBindVertexArray(previousArray);
             GL20.glUseProgram(previousProgram);
@@ -164,6 +184,7 @@ final class GuardImpactFrame {
         }
         program = candidate;
         uniformScene = GL20.glGetUniformLocation(program, "scene");
+        uniformClean = GL20.glGetUniformLocation(program, "clean");
         uniformInvert = GL20.glGetUniformLocation(program, "invert");
         uniformColorMode = GL20.glGetUniformLocation(program, "colorMode");
         uniformChromatic = GL20.glGetUniformLocation(program, "chromatic");

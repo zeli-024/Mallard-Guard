@@ -10,8 +10,6 @@ import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL30;
 
 import java.util.ArrayDeque;
 import java.util.Queue;
@@ -39,11 +37,11 @@ public final class GuardHitlag {
             feedback.run();
             return;
         }
-        afterFeedback.add(feedback);
+        enqueue(feedback);
         impactEnabled = impact;
         impactWasDrawn = false;
         impactDurationNanos = Math.max(1, GuardConfig.HITLAG_FRAMES.get()) * NANOS_PER_FRAME;
-        if (freeze) freezeCapturePending = true;
+        if (freeze) { freezeCapturePending = true; PunchyGuardCompat.parryHitlagStarted(); }
         else impactCapturePending = true;
     }
 
@@ -55,9 +53,13 @@ public final class GuardHitlag {
     /** Queue local effects until the freeze and impact image end. */
     public static void afterFreeze(Runnable action) {
         if (freezeCapturePending || frozenUntilNanos != 0 || impactCapturePending || impactStartNanos != 0)
-            afterFeedback.add(action);
+            enqueue(action);
         else action.run();
     }
+
+    public static boolean freezeActive() { return freezeCapturePending || frozenUntilNanos != 0 && System.nanoTime() < frozenUntilNanos; }
+
+    private static void enqueue(Runnable action){if(afterFeedback.size()>=256)afterFeedback.remove().run();afterFeedback.add(action);}
 
     public static void clear() {
         freezeCapturePending = impactCapturePending = impactEnabled = impactWasDrawn = false;
@@ -132,20 +134,5 @@ public final class GuardHitlag {
         }
     }
 
-    static void copy(RenderTarget source, RenderTarget target) {
-        int previousRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
-        int previousDraw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-        boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-        if (scissor) GL11.glDisable(GL11.GL_SCISSOR_TEST);
-        try {
-            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, source.frameBufferId);
-            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, target.frameBufferId);
-            GL30.glBlitFramebuffer(0, 0, source.width, source.height,
-                0, 0, target.width, target.height, GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
-        } finally {
-            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previousRead);
-            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, previousDraw);
-            if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        }
-    }
+    static void copy(RenderTarget source,RenderTarget target){GuardRenderTargets.copy(source,target);}
 }

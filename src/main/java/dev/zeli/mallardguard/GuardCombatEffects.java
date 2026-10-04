@@ -33,6 +33,8 @@ public final class GuardCombatEffects {
     private static final Map<LivingEntity, Integer> STUNNED = new java.util.WeakHashMap<>();
     private static final ResourceLocation STUN_SPEED = ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "shield_stun");
 
+    public static void clearSession(){for(var entity:STUNNED.keySet()){var speed=entity.getAttribute(Attributes.MOVEMENT_SPEED);if(speed!=null)speed.removeModifier(STUN_SPEED);}STUNNED.clear();FALL_BLASTS.clear();}
+
     private GuardCombatEffects() {}
 
     public static boolean isOwnFallBlast(ServerPlayer player, DamageSource source) {
@@ -145,8 +147,16 @@ public final class GuardCombatEffects {
         return false;
     }
 
+    public static void leave(net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent event) {
+        if (!event.getLevel().isClientSide && event.getEntity() instanceof LivingEntity entity) {
+            STUNNED.remove(entity);
+            AttributeInstance movement = entity.getAttribute(Attributes.MOVEMENT_SPEED);
+            if (movement != null) movement.removeModifier(STUN_SPEED);
+        }
+    }
+
     public static boolean stunned(Entity entity) {
-        return entity instanceof ServerPlayer player && GuardStagger.stunned(player) || entity instanceof LivingEntity living && STUNNED.containsKey(living);
+        return entity instanceof LivingEntity living && STUNNED.containsKey(living);
     }
 
     public static void tickStun(EntityTickEvent.Post event) {
@@ -179,7 +189,6 @@ public final class GuardCombatEffects {
         GuardState.Result result = GuardState.handleProjectile(player, projectile);
         if (result == GuardState.Result.NONE) return;
         boolean shield = GuardState.shieldGuard(player);
-        if (result == GuardState.Result.PERFECT) GuardStagger.perfect(player);
         event.setCanceled(true);
         Entity owner = projectile.getOwner();
         Vec3 sparkDirection = owner != null && owner != player ? owner.position().subtract(player.position())
