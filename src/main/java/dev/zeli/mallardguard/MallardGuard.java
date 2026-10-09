@@ -39,6 +39,8 @@ public final class MallardGuard {
         container.registerConfig(ModConfig.Type.SERVER, GuardConfig.SERVER_SPEC, "mallard_guard/server.toml");
         container.registerConfig(ModConfig.Type.CLIENT, GuardConfig.CLIENT_SPEC, "mallard_guard/client.toml");
         container.registerConfig(ModConfig.Type.CLIENT, GuardConfig.PUNCHY_SPEC, "mallard_guard/mg_punchy/config.toml");
+        modBus.addListener(GuardShieldExpansionCompat::setup);
+        NeoForge.EVENT_BUS.addListener(GuardShieldExpansionCompat::serverStarted);
         GuardSounds.EVENTS.register(modBus);
         GuardParticles.TYPES.register(modBus);
         modBus.addListener(GuardPackets::register);
@@ -46,16 +48,19 @@ public final class MallardGuard {
         NeoForge.EVENT_BUS.addListener(GuardMobState::tick);
         NeoForge.EVENT_BUS.addListener(GuardMobState::damaged);
         NeoForge.EVENT_BUS.addListener(GuardMobState::equip);
+        NeoForge.EVENT_BUS.addListener(GuardMobState::tagsUpdated);
         NeoForge.EVENT_BUS.addListener(GuardMobState::join);
         NeoForge.EVENT_BUS.addListener(GuardMobState::leave);
         NeoForge.EVENT_BUS.addListener(GuardMobState::stopping);
         NeoForge.EVENT_BUS.addListener(this::serverStopped);
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.tick.ServerTickEvent.Post event)->GuardPackets.expireUploads());
         NeoForge.EVENT_BUS.addListener(GuardPoses::tracking);
         NeoForge.EVENT_BUS.addListener(GuardState::attacked);
         NeoForge.EVENT_BUS.addListener(GuardState::preventVanillaShieldUse);
         NeoForge.EVENT_BUS.addListener(this::commands);
         NeoForge.EVENT_BUS.addListener(this::playerJoined);
         NeoForge.EVENT_BUS.addListener(this::playerLeft);
+        NeoForge.EVENT_BUS.addListener(this::playerRespawned);
         NeoForge.EVENT_BUS.addListener(this::incomingDamage);
         NeoForge.EVENT_BUS.addListener(this::returnKnockback);
         NeoForge.EVENT_BUS.addListener(this::shieldBlock);
@@ -68,7 +73,7 @@ public final class MallardGuard {
     }
 
     private void serverStopped(net.neoforged.neoforge.event.server.ServerStoppedEvent event){
-        GuardPoseLibrary.clearEnforcedCache();GuardState.clearSession();GuardRetaliation.clearSession();GuardDamageRules.clearSession();GuardEffects.clearSession();GuardCombatEffects.clearSession();GuardConfig.serverClosed();
+        GuardPoseLibrary.clearEnforcedCache();GuardState.clearSession();GuardItemRules.clearServerRules();GuardRetaliation.clearSession();GuardDamageRules.clearSession();GuardEffects.clearSession();GuardCombatEffects.clearSession();GuardConfig.serverClosed();GuardPackets.clearUploads();GuardPackets.clearPlayerPalettes();
     }
 
     private void commands(RegisterCommandsEvent event) {
@@ -84,19 +89,25 @@ public final class MallardGuard {
 
     private void playerJoined(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            PacketDistributor.sendToPlayer(player, GuardPackets.clientPolicy());
-            PacketDistributor.sendToPlayer(player, GuardConfig.shieldSnapshot());
-            PacketDistributor.sendToPlayer(player, GuardConfig.mobSnapshot(false));
-            PacketDistributor.sendToPlayer(player, GuardConfig.snapshot(player.hasPermissions(2)));
+            GuardPackets.sendInitialConfig(player);
+            GuardPackets.playerPalettesJoined(player);
         }
     }
 
     private void playerLeft(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            GuardPackets.forgetUpload(player.getUUID());
+            GuardPackets.forgetPlayerPalette(player.getUUID());
             GuardState.forget(player);
             GuardDamageRules.forget(player);
             GuardEffects.forget(player);
             GuardRetaliation.forget(player);
+        }
+    }
+
+    private void playerRespawned(PlayerEvent.PlayerRespawnEvent event){
+        if(event.getEntity() instanceof ServerPlayer player){
+            GuardState.forget(player);GuardRetaliation.cancelPending(player);GuardEffects.forget(player);
         }
     }
 
@@ -121,7 +132,7 @@ public final class MallardGuard {
         if (result == GuardState.Result.PERFECT || result == GuardState.Result.PARRY) {
             boolean shield = GuardState.shieldGuard(player);
             PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : 1, false, result == GuardState.Result.PERFECT ? GuardRetaliation.begin(player) : 0));
-            GuardEffects.onHit(player, event.getSource(), result);
+            GuardEffects.onHit(player, event.getSource(), result,event.getAmount());
             GuardState.wear(player, result);
             event.setCanceled(true);
             if (event.getSource().is(DamageTypes.FALL) || event.getSource().is(DamageTypes.FLY_INTO_WALL)) {
@@ -148,7 +159,7 @@ public final class MallardGuard {
         }
         if (result == GuardState.Result.BLOCK) {
             PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(3, GuardState.guardBreakPending(player), 0));
-            GuardEffects.onHit(player, event.getSource(), result);
+            GuardEffects.onHit(player, event.getSource(), result,event.getAmount());
             GuardState.wear(player, result);
             event.setAmount(event.getAmount() * (1.0F - GuardConfig.BLOCK_REDUCTION.get().floatValue()));
         }
@@ -160,12 +171,15 @@ public final class MallardGuard {
             event.setBlocked(false);
             return;
         }
-        if (!GuardState.isShieldBlocking(player)) return;
         if (GuardState.guardBreakPending(player)) { event.setBlocked(false); return; }
+        if (!GuardState.isShieldBlocking(player)) return;
         if (!event.getBlocked() || event.getBlockedDamage() <= 0) return;
+        float intercepted=event.getBlockedDamage();
+        if(event.getDamageSource().is(net.minecraft.tags.DamageTypeTags.IS_EXPLOSION))
+            event.setBlockedDamage((float)(intercepted*GuardShieldExpansionCompat.explosionBlockedFraction(player.getUseItem())));
         GuardState.shieldBlocked(player);
         PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(3, GuardState.guardBreakPending(player), 0));
-        GuardEffects.onHit(player, event.getDamageSource(), GuardState.Result.BLOCK);
+        GuardEffects.onHit(player, event.getDamageSource(), GuardState.Result.BLOCK,intercepted);
         // The item's own shield logic handles damage reduction and durability.
     }
 
@@ -173,10 +187,15 @@ public final class MallardGuard {
         if (event.getEntity() == RETURN_KNOCKBACK_TARGET.get()) event.setCanceled(true);
     }
 
+    static boolean returningDamage() { return RETURNING_DAMAGE.get(); }
+
     public static void returnDamage(LivingEntity defender, LivingEntity target, float amount) {
         int cap = GuardConfig.RETALIATION_CAP.get();
         if (cap > 0) amount = Math.min(amount, cap);
         if (!Float.isFinite(amount) || amount <= 0) return;
+        int previousInvulnerability=target.invulnerableTime;
+        var damageState=(dev.zeli.mallardguard.mixin.LivingEntityDamageAccessor)target;
+        float previousDamage=damageState.mallardguard$getLastHurt();
         boolean previousReturning = RETURNING_DAMAGE.get();
         LivingEntity previousTarget = RETURN_KNOCKBACK_TARGET.get();
         RETURNING_DAMAGE.set(true);
@@ -184,6 +203,9 @@ public final class MallardGuard {
         try { target.hurt(defender instanceof net.minecraft.world.entity.player.Player player
             ? defender.damageSources().playerAttack(player) : defender.damageSources().mobAttack(defender), amount); }
         finally {
+            // Retaliation does not create a recovery window or alter an existing hit's threshold.
+            target.invulnerableTime=previousInvulnerability;
+            damageState.mallardguard$setLastHurt(previousDamage);
             if (previousTarget == null) RETURN_KNOCKBACK_TARGET.remove();
             else RETURN_KNOCKBACK_TARGET.set(previousTarget);
             if (previousReturning) RETURNING_DAMAGE.set(true);

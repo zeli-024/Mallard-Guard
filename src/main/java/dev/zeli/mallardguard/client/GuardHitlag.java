@@ -23,14 +23,16 @@ public final class GuardHitlag {
     private static boolean freezeCapturePending, impactCapturePending;
     private static long frozenUntilNanos, impactStartNanos;
     private static boolean impactEnabled, impactWasDrawn, inverted;
-    private static long impactDurationNanos;
+    private static long impactDurationNanos, freezeDurationNanos;
+    public static int frames(boolean perfect) { return perfect ? GuardConfig.HITLAG_FRAMES.get() : GuardConfig.REGULAR_HITLAG_FRAMES.get(); }
 
     private GuardHitlag() {}
 
-    public static void trigger(boolean enabledForResult, boolean perfect, Runnable feedback) {
+    public static void trigger(boolean perfect, Runnable feedback) {
         inverted = false;
         Minecraft mc = Minecraft.getInstance();
-        boolean freeze = enabledForResult && GuardConfig.HITLAG_FRAMES.get() > 0;
+        int frames = frames(perfect);
+        boolean freeze = frames > 0;
         boolean impact = GuardConfig.IMPACT_FRAMES.get() > 0
             && (perfect || !GuardConfig.IMPACT_PERFECT_ONLY.get());
         if ((!freeze && !impact) || mc.player == null || mc.level == null || mc.screen != null) {
@@ -40,13 +42,14 @@ public final class GuardHitlag {
         enqueue(feedback);
         impactEnabled = impact;
         impactWasDrawn = false;
-        impactDurationNanos = Math.max(1, GuardConfig.HITLAG_FRAMES.get()) * NANOS_PER_FRAME;
+        impactDurationNanos = Math.max(1, frames) * NANOS_PER_FRAME;
+        freezeDurationNanos = frames * NANOS_PER_FRAME;
         if (freeze) { freezeCapturePending = true; PunchyGuardCompat.parryHitlagStarted(); }
         else impactCapturePending = true;
     }
 
     public static void triggerMobCounter(Runnable feedback) {
-        trigger(true, true, feedback);
+        trigger(true, feedback);
         inverted = true;
     }
 
@@ -114,7 +117,7 @@ public final class GuardHitlag {
         if (freezeCapturePending) {
             copy(screen, captured);
             freezeCapturePending = false;
-            frozenUntilNanos = System.nanoTime() + GuardConfig.HITLAG_FRAMES.get() * NANOS_PER_FRAME;
+            frozenUntilNanos = System.nanoTime() + freezeDurationNanos;
         }
         if (frozenUntilNanos != 0) {
             copy(captured, screen);

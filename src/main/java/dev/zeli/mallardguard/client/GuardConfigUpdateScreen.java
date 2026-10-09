@@ -21,7 +21,8 @@ public final class GuardConfigUpdateScreen extends Screen {
     private record Row(FormattedCharSequence text, int color) {}
     private final List<Row> rows = new ArrayList<>();
     private int scroll;
-    private boolean failed;
+    private boolean failed,draggingScroll;
+    private double scrollGrab;
 
     public GuardConfigUpdateScreen(Screen parent) {
         super(Component.literal("Mallard Guard config update"));
@@ -43,11 +44,11 @@ public final class GuardConfigUpdateScreen extends Screen {
     @Override protected void init() {
         themedButtons.clear();
         rows.clear();
-        int listWidth = Math.max(80, Math.min(430, width - 36));
+        int listWidth = Math.max(80, GuardUiLayout.wideWidth(width) - 18);
         for (String change : changes) {
             int color = change.startsWith("Added:") ? 0xFFAEE9A3 : change.startsWith("Removed:") ? 0xFFE6A8A8
-                : change.startsWith("Default changed:") ? 0xFFD8BEAA : 0xFFF5F0F6;
-            for (FormattedCharSequence line : font.split(Component.literal(change), listWidth - 12))
+                : change.startsWith("Default changed:") ? GuardUi.WARM : GuardUi.TEXT;
+            for (FormattedCharSequence line : font.split(Component.literal(change), listWidth - 24))
                 rows.add(new Row(line, color));
         }
         int center = width / 2;
@@ -77,16 +78,15 @@ public final class GuardConfigUpdateScreen extends Screen {
 
     @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         int center = width / 2;
-        int listWidth = Math.max(80, Math.min(430, width - 36));
+        int listWidth = Math.max(80, GuardUiLayout.wideWidth(width) - 18);
         int left = center - listWidth / 2;
         int listTop = height < 230 ? 44 : 62;
         int listBottom = Math.max(listTop + 12, height - (height < 230 ? 70 : 101));
-        renderBackground(graphics, mouseX, mouseY, delta);
+        graphics.flush();renderBackground(graphics, mouseX, mouseY, delta);graphics.flush();
         graphics.fill(0, 0, width, height, 0x6219141E);
-        graphics.fill(left - 9, 10, left + listWidth + 9, height - 7, 0xD1211B2A);
-        graphics.fill(left - 9, 10, left + listWidth + 9, 12, 0xFFD8BEAA);
-        graphics.drawCenteredString(font, title, center, 17, 0xFFD8BEAA);
-        if (height >= 230) graphics.drawCenteredString(font, "Saved settings need an update before editing.", center, 36, 0xFFF5F0F6);
+        GuardUi.panel(graphics,left-9,10,listWidth+18,height-17,false);
+        graphics.drawCenteredString(font, title, center, 17, GuardUi.WARM);
+        if (height >= 230) graphics.drawCenteredString(font, "Saved settings need an update before editing.", center, 36, GuardUi.TEXT);
         graphics.fill(left, listTop - 3, left + listWidth, listBottom, 0xFF302737);
         int visible = Math.max(1, (listBottom - listTop) / 12);
         scroll = Math.clamp(scroll, 0, Math.max(0, rows.size() - visible));
@@ -94,6 +94,7 @@ public final class GuardConfigUpdateScreen extends Screen {
         for (int i = scroll; i < Math.min(rows.size(), scroll + visible); i++)
             graphics.drawString(font, rows.get(i).text(), left + 6, listTop + (i - scroll) * 12, rows.get(i).color());
         graphics.disableScissor();
+        GuardUi.scrollbar(graphics,scrollbar(),mouseX,mouseY,draggingScroll);
         if (rows.size() > visible) graphics.drawCenteredString(font, "Scroll for more changes", center, listBottom + 2, 0xFFAAAAAA);
         int noteY = height - 87;
         if (height >= 230) {
@@ -106,6 +107,14 @@ public final class GuardConfigUpdateScreen extends Screen {
 
     }
 
+    private GuardUiLayout.Scrollbar scrollbar(){
+        int listWidth=Math.max(80,GuardUiLayout.wideWidth(width)-18),listTop=height<230?44:62;
+        int listBottom=Math.max(listTop+12,height-(height<230?70:101));
+        return new GuardUiLayout.Scrollbar(width/2+listWidth/2-8,listTop,listBottom-listTop,Math.max(1,(listBottom-listTop)/12),rows.size(),scroll);
+    }
+    @Override public boolean mouseClicked(double x,double y,int button){if(button==0&&scrollbar().contains(x,y)){draggingScroll=true;scrollGrab=scrollbar().grab(y);scroll=scrollbar().scrollAt(y,scrollGrab);return true;}return super.mouseClicked(x,y,button);}
+    @Override public boolean mouseDragged(double x,double y,int button,double dx,double dy){if(button==0&&draggingScroll){scroll=scrollbar().scrollAt(y,scrollGrab);return true;}return super.mouseDragged(x,y,button,dx,dy);}
+    @Override public boolean mouseReleased(double x,double y,int button){if(button==0&&draggingScroll){draggingScroll=false;return true;}return super.mouseReleased(x,y,button);}
     @Override public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         scroll = Math.max(0, scroll - (int) Math.signum(scrollY) * 3);
         return true;
@@ -114,4 +123,6 @@ public final class GuardConfigUpdateScreen extends Screen {
     @Override public void onClose() {
         Minecraft.getInstance().setScreen(parent);
     }
+    @Override public void removed(){draggingScroll=false;super.removed();}
+
 }

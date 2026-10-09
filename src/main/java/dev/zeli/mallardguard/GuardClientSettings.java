@@ -6,7 +6,11 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 /** Stable client setting slots shared by config files, presets, enforcement and the UI. */
 public final class GuardClientSettings {
     private record Slot(String key, int category, int initial, int min, int max,
-                        boolean flag, Supplier<ModConfigSpec.ConfigValue<?>> value) {}
+                        boolean flag, Supplier<ModConfigSpec.ConfigValue<?>> value, int scale) {
+        Slot(String key,int category,int initial,int min,int max,boolean flag,Supplier<ModConfigSpec.ConfigValue<?>> value) {
+            this(key,category,initial,min,max,flag,value,1);
+        }
+    }
     // Reserved slots retain their old positions so saved presets stay compatible.
     private static final Slot[] SLOTS = {
         new Slot("display.hud", 2, 1, 0, 1, true, () -> GuardConfig.HUD),
@@ -15,49 +19,49 @@ public final class GuardClientSettings {
         new Slot("display.hitlagFrames", 8, 6, 0, 10, false, () -> GuardConfig.HITLAG_FRAMES),
         new Slot("display.flashStrength", 8, 100, 0, 100, false, () -> GuardConfig.FLASH_STRENGTH),
         new Slot("display.shakeStrength", 8, 100, 0, 100, false, () -> GuardConfig.SHAKE_STRENGTH),
-        new Slot(null, 0, 0, 0, 1, true, () -> null),
-        new Slot("display.regularOrbSize", 1, 20, 0, 200, false, () -> GuardConfig.REGULAR_ORB_SIZE),
-        new Slot("display.perfectOrbSize", 1, 40, 0, 200, false, () -> GuardConfig.PERFECT_ORB_SIZE),
-        new Slot("display.regularOrbOpacity", 1, 100, 0, 100, false, () -> GuardConfig.REGULAR_ORB_OPACITY),
-        new Slot("display.perfectOrbOpacity", 1, 100, 0, 100, false, () -> GuardConfig.PERFECT_ORB_OPACITY),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
         new Slot("animation.firstPersonGuardPose", 16, 1, 0, 1, true, () -> GuardConfig.FIRST_PERSON_ANIMATION),
         new Slot("audio.masterVolume", 4, 100, 0, 200, false, () -> GuardConfig.LOCAL_MASTER_VOLUME),
         new Slot("audio.parryVolume", 4, 65, 0, 200, false, () -> GuardConfig.LOCAL_PARRY_VOLUME),
         new Slot("audio.perfectVolume", 4, 130, 0, 200, false, () -> GuardConfig.LOCAL_PERFECT_VOLUME),
         new Slot("audio.blockVolume", 4, 65, 0, 200, false, () -> GuardConfig.LOCAL_BLOCK_VOLUME),
-        new Slot("sparks.regularAmount", 1, 100, 0, 200, false, () -> GuardConfig.REGULAR_SPARK_COUNT),
-        new Slot("sparks.perfectAmount", 1, 170, 0, 200, false, () -> GuardConfig.PERFECT_SPARK_COUNT),
-        new Slot("sparks.stars", 1, 2, 0, 16, false, () -> GuardConfig.STAR_COUNT),
-        new Slot("sparks.lifetime", 1, 100, 0, 200, false, () -> GuardConfig.SPARK_LIFETIME),
-        new Slot("sparks.length", 1, 50, 0, 200, false, () -> GuardConfig.SPARK_LENGTH),
-        new Slot("sparks.explosiveness", 1, 80, 0, 200, false, () -> GuardConfig.SPARK_EXPLOSIVENESS),
-        new Slot("display.sparksEnabled", 1, 1, 0, 1, true, () -> GuardConfig.SPARKS_ENABLED),
-        new Slot("display.particleFlashesEnabled", 1, 1, 0, 1, true, () -> GuardConfig.PARTICLE_FLASHES_ENABLED),
+        new Slot("particles.flyingSparks.baseIntensity", 1, 5, 0, 100, false, () -> GuardParticleConfig.FLYING_BASE_INTENSITY),
+        new Slot("particles.flyingSparks.perfectIntensity", 1, 50, 0, 100, false, () -> GuardParticleConfig.FLYING_PERFECT_INTENSITY),
+        new Slot("particles.flyingSparks.damageScaling", 1, 5, 0, 100, false, () -> GuardParticleConfig.FLYING_DAMAGE_SCALING),
+        new Slot("particles.dotStreaks.baseIntensity", 1, 5, 0, 100, false, () -> GuardParticleConfig.DEBRIS_BASE_INTENSITY),
+        new Slot("particles.dotStreaks.perfectIntensity", 1, 50, 0, 100, false, () -> GuardParticleConfig.DEBRIS_PERFECT_INTENSITY),
+        new Slot("particles.dotStreaks.damageScaling", 1, 5, 0, 100, false, () -> GuardParticleConfig.DEBRIS_DAMAGE_SCALING),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
         new Slot("display.memeFlash", 8, 0, 0, 1, true, () -> GuardConfig.MEME_FLASH),
-        new Slot("display.sparkRing", 1, 0, 0, 1, true, () -> GuardConfig.SPARK_RING),
-        new Slot("display.streaksEnabled", 1, 1, 0, 1, true, () -> GuardConfig.STREAKS_ENABLED),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
         new Slot("display.perfectOnlyFlash", 8, 1, 0, 1, true, () -> GuardConfig.PERFECT_ONLY_FLASH),
-        new Slot("display.perfectOnlyHitlag", 8, 1, 0, 1, true, () -> GuardConfig.PERFECT_ONLY_HITLAG),
-        new Slot("sparks.streakAmount", 1, 100, 0, 200, false, () -> GuardConfig.STREAK_AMOUNT),
-        new Slot("sparks.streakLength", 1, 150, 0, 200, false, () -> GuardConfig.STREAK_LENGTH),
-        new Slot("sparks.streakLifetime", 1, 25, 2, 40, false, () -> GuardConfig.STREAK_LIFETIME),
-        new Slot(null, 1, 30, 1, 30, false, () -> null),
-        new Slot("display.regularOrbLifetime", 1, 5, 1, 12, false, () -> GuardConfig.REGULAR_ORB_LIFETIME),
+        new Slot(null, 8, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
         new Slot("display.impactFrames", 8, 1, 0, 1, false, () -> GuardConfig.IMPACT_FRAMES),
         new Slot("display.impactPerfectOnly", 8, 1, 0, 1, true, () -> GuardConfig.IMPACT_PERFECT_ONLY),
-        new Slot("display.perfectOrbLifetime", 1, 6, 1, 12, false, () -> GuardConfig.PERFECT_ORB_LIFETIME),
-        new Slot("sparks.streakDotSize", 1, 100, 0, 200, false, () -> GuardConfig.STREAK_DOT_SIZE),
-        new Slot("sparks.streakStretchSpeed", 1, 200, 0, 200, false, () -> GuardConfig.STREAK_STRETCH_SPEED),
-        new Slot("sparks.regularStreakAmount", 1, 100, 0, 200, false, () -> GuardConfig.REGULAR_STREAK_AMOUNT),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
         new Slot("display.impactBrightness", 8, 400, 0, 400, false, () -> GuardConfig.IMPACT_BRIGHTNESS),
         new Slot("display.impactContrast", 8, 200, 0, 400, false, () -> GuardConfig.IMPACT_CONTRAST),
         new Slot("display.impactEdges", 8, 400, 0, 400, false, () -> GuardConfig.IMPACT_EDGES),
         new Slot("display.impactGrain", 8, 400, 0, 400, false, () -> GuardConfig.IMPACT_GRAIN),
-        new Slot("sparks.reach", 1, 10, 0, 200, false, () -> GuardConfig.SPARK_REACH),
-        new Slot("sparks.streakDotSpacing", 1, 35, 1, 200, false, () -> GuardConfig.STREAK_DOT_SPACING),
-        new Slot("sparks.regularStreakDotSpacing", 1, 50, 1, 200, false, () -> GuardConfig.REGULAR_STREAK_DOT_SPACING),
-        new Slot(null, 1, 15, 15, 15, false, () -> null),
-        new Slot("sparks.streakBallisticCurve", 1, 20, 0, 200, false, () -> GuardConfig.STREAK_BALLISTIC_CURVE),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, GuardParticleConfig.PRESET_REVISION, GuardParticleConfig.PRESET_REVISION, GuardParticleConfig.PRESET_REVISION, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
         new Slot("animation.thirdPersonGuardPose", 16, 1, 0, 1, true, () -> GuardConfig.THIRD_PERSON_ANIMATION),
         new Slot("display.impactChromatic", 8, 400, 0, 400, false, () -> GuardConfig.IMPACT_CHROMATIC),
         new Slot("display.mobImpactBrightness", 8, 186, 0, 400, false, () -> GuardConfig.MOB_IMPACT_BRIGHTNESS),
@@ -68,22 +72,35 @@ public final class GuardClientSettings {
         new Slot("display.mobImpactAdapt", 8, 1, 0, 1, true, () -> GuardConfig.MOB_IMPACT_ADAPT),
         new Slot("display.mobImpactInvert", 8, 1, 0, 1, true, () -> GuardConfig.MOB_IMPACT_INVERT),
         new Slot("display.chromaticIntensity", 8, 200, 0, 200, false, () -> GuardConfig.CHROMATIC_INTENSITY),
-        new Slot("display.chromaticTicks", 8, 10, 1, 40, false, () -> GuardConfig.CHROMATIC_TICKS),
+        new Slot("display.chromaticTicks", 8, 6, 1, 40, false, () -> GuardConfig.CHROMATIC_TICKS),
         new Slot("display.chromaticPerfectOnly", 8, 0, 0, 1, true, () -> GuardConfig.CHROMATIC_PERFECT_ONLY),
         new Slot("display.chromaticHud", 8, 1, 0, 1, true, () -> GuardConfig.CHROMATIC_HUD),
-        new Slot("display.streakReverse", 1, 1, 0, 1, true, () -> GuardConfig.STREAK_REVERSE),
-        new Slot(null, 0, 0, 0, 1, true, () -> null),
-        new Slot(null, 0, 0, 0, 100, false, () -> null),
+        new Slot("display.regularHitlagFrames", 8, 0, 0, 10, false, () -> GuardConfig.REGULAR_HITLAG_FRAMES),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
+        new Slot(null, 1, 0, 0, 0, false, () -> null),
     };
     private GuardClientSettings() {}
+    static int legacyRegularHitlag(com.electronwill.nightconfig.core.Config previous) {
+        Object frames=previous.get("display.hitlagFrames");
+        return Boolean.FALSE.equals(previous.get("display.perfectOnlyHitlag"))
+            ? Math.clamp(frames instanceof Number n?n.intValue():initial(3),0,10):0;
+    }
     public static int count() { return SLOTS.length; }
     public static String key(int index) { return SLOTS[index].key(); }
     public static int category(int index) { return SLOTS[index].category(); }
     public static boolean flag(int index) { return SLOTS[index].flag(); }
     public static int initial(int index) { return SLOTS[index].initial(); }
+    public static boolean reserved(int index) { return GuardParticleConfig.legacySlot(index) || (index<SLOTS.length && index!=47 && SLOTS[index].key()==null); }
     public static boolean initialFlag(int index) { return initial(index) != 0; }
     public static int minimum(int index) { return SLOTS[index].min(); }
     public static int maximum(int index) { return SLOTS[index].max(); }
+    public static int scale(int index) { return SLOTS[index].scale(); }
+    public static int local(int index) {
+        var setting=SLOTS[index].value().get();
+        if(setting==null)return initial(index);
+        Object value=setting.get();
+        return value instanceof Boolean flag?flag?1:0:(int)Math.round(((Number)value).doubleValue()*scale(index));
+    }
     public static int[] defaults() {
         int[] values = new int[count()];
         for (int i = 0; i < values.length; i++) values[i] = SLOTS[i].initial();
@@ -102,7 +119,7 @@ public final class GuardClientSettings {
             var setting = SLOTS[i].value().get();
             if (setting == null) continue;
             Object value = setting.get();
-            values[i] = value instanceof Boolean enabled ? enabled ? 1 : 0 : ((Number)value).intValue();
+            values[i] = value instanceof Boolean enabled ? enabled ? 1 : 0 : (int)Math.round(((Number)value).doubleValue()*scale(i));
         }
         if (!GuardConfig.SCREEN_SHAKE.get()) values[5] = 0;
         return values;
@@ -115,6 +132,7 @@ public final class GuardClientSettings {
             var setting = slot.value().get();
             if (setting == null) continue;
             if (slot.flag()) ((ModConfigSpec.ConfigValue<Boolean>) setting).set(values[i] != 0);
+            else if(slot.scale()!=1) ((ModConfigSpec.ConfigValue<Double>) setting).set(values[i]/(double)slot.scale());
             else ((ModConfigSpec.ConfigValue<Integer>) setting).set(values[i]);
         }
         if (category == GuardClientPreset.SCREEN) GuardConfig.SCREEN_SHAKE.set(values[5] > 0);

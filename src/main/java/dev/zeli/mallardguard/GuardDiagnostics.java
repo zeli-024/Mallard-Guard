@@ -3,10 +3,11 @@ package dev.zeli.mallardguard;
 /** Optional client event logging; bounded suppression prevents repeated packet spam. */
 public final class GuardDiagnostics {
     public static final int GUARD=1,DAMAGE=2,ANIMATION=4,CONFIG=8,MOB=16,PUNCHY_REACTION=32,PUNCHY_HANDS=64,PUNCHY_PRIORITY=128;
-    public static final int ALL=255;
+    public static final int PARTICLE_COLLISIONS=256;
+    public static final int DEFAULT_EVENT_GROUPS=255, ALL=511;
     private static final org.slf4j.Logger LOGGER=org.slf4j.LoggerFactory.getLogger("Mallard Guard/Debug");
-    private static final String[] LAST=new String[8];
-    private static final long[] TIMES=new long[8];
+    private static final String[] LAST=new String[9];
+    private static final long[] TIMES=new long[9];
     private GuardDiagnostics(){}
     public static boolean enabled(int group){return (GuardConfig.DEBUG_CLIENT_FLAGS.get()&group)!=0;}
     public static void event(int group,String message){

@@ -74,8 +74,9 @@ public final class GuardState {
     private static boolean clientAllowEmptyHand;
     private static GuardPackets.Settings clientRules;
     private static String clientShieldBlacklist="";
+    private static final GuardItemRules.Source CLIENT_INCLUDED=new GuardItemRules.Source(),CLIENT_EXCLUDED=new GuardItemRules.Source();
     public static void setClientShieldBlacklist(String blacklist){clientShieldBlacklist=blacklist;}
-    public static void setClientRules(GuardPackets.Settings rules){clientRules=rules;}
+    public static void setClientRules(GuardPackets.Settings rules){clientRules=rules;if(rules==null){CLIENT_INCLUDED.clear();CLIENT_EXCLUDED.clear();GuardItemRules.clearClientShieldRules();}}
 
     public enum Result { NONE, PERFECT, PARRY, BLOCK }
 
@@ -85,8 +86,13 @@ public final class GuardState {
 
     public static void forget(ServerPlayer player) {
         updateMovement(player, false);
-        STATES.remove(player.getUUID());
+        GuardState previous=STATES.remove(player.getUUID());
         ATTACK_LOCKS.remove(player.getUUID());
+        if(previous!=null){
+            if(previous.held&&GuardItemRules.shieldLike(previous.heldItem)&&player.isUsingItem()
+                &&player.getUsedItemHand()==previous.guardHand)player.stopUsingItem();
+            sync(player,new GuardState());
+        }
     }
 
     public static boolean eligible(Player player) {
@@ -101,15 +107,15 @@ public final class GuardState {
         if (stack.isEmpty()) {
             boolean allowed = player.level().isClientSide ? clientAllowEmptyHand : GuardConfig.ALLOW_EMPTY_HAND.get();
             InteractionHand other = hand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-            return allowed && (player.getItemInHand(other).isEmpty() || !eligible(player, other));
+            return allowed && player.getItemInHand(other).isEmpty();
         }
         boolean client=player.level().isClientSide && clientRules!=null;
-        String excluded=client?clientRules.excludedItems():GuardConfig.EXCLUDED_ITEMS.get();
-        String included=client?clientRules.includedItems():GuardConfig.INCLUDED_ITEMS.get();
-        if (GuardItemRules.matches(stack, excluded)) return false;
+        String excluded=client?clientRules.excludedItems():"";
+        String included=client?clientRules.includedItems():"";
+        if (client?CLIENT_EXCLUDED.get(excluded).matches(stack):GuardItemRules.excluded(stack)) return false;
         if (client?clientRules.allowAnyItem():GuardConfig.ALLOW_ANY_ITEM.get()) return true;
-        if (client?GuardItemRules.shieldLike(stack,clientRules.shieldItems(),clientShieldBlacklist):GuardItemRules.shieldLike(stack)) return true;
-        if (GuardItemRules.matches(stack, included)) return true;
+        if (client?GuardItemRules.clientShieldLike(stack,clientRules.shieldItems(),clientShieldBlacklist):GuardItemRules.shieldLike(stack)) return true;
+        if (client?CLIENT_INCLUDED.get(included).matches(stack):GuardItemRules.included(stack)) return true;
         if (!(client?clientRules.allowUsableItems():GuardConfig.ALLOW_USABLE_ITEMS.get()) && stack.getUseAnimation() != UseAnim.NONE) return false;
         // MAINHAND attack weapons remain valid when held in the offhand.
         return GuardItemRules.hasAttackDamage(stack, hand == InteractionHand.OFF_HAND);
@@ -124,6 +130,7 @@ public final class GuardState {
     }
 
     public static void input(ServerPlayer player, boolean down, boolean requestedOffhand) {
+        if(!player.isAlive()){forget(player);GuardRetaliation.cancelPending(player);return;}
         GuardState state = STATES.computeIfAbsent(player.getUUID(), ignored -> new GuardState());
         if (down && GuardConfig.CONSUMABLE_PRIORITY.get() && GuardItemRules.consumableInEitherHand(player)) down = false;
         if (!down) {
@@ -174,7 +181,7 @@ public final class GuardState {
         state.phase = GuardConfig.PARRY.get() ? ((shield ? GuardConfig.SHIELD_PERFECT_TICKS : GuardConfig.PERFECT_TICKS).get() > 0 ? 1 : 2)
             : shield ? 4 : 3;
         if (shield && (!player.isUsingItem() || player.getUsedItemHand() != hand)) player.startUsingItem(hand);
-        state.recharge = (shield ? GuardConfig.SHIELD_RECHARGE_TICKS : GuardConfig.RECHARGE_TICKS).get();
+        state.recharge = (shield ? GuardShieldExpansionCompat.cooldownTicks(state.heldItem,GuardConfig.SHIELD_RECHARGE_TICKS.get()) : GuardConfig.RECHARGE_TICKS.get());
         state.rechargeDuration = state.recharge;
         updateMovement(player, true);
         sync(player, state);
@@ -207,11 +214,11 @@ public final class GuardState {
             } else if (state.phase == 1 || state.phase == 2) {
                 state.elapsed++;
                 boolean shield = GuardItemRules.shieldLike(state.heldItem);
-                if (state.elapsed >= (shield ? GuardConfig.SHIELD_PARRY_TICKS : GuardConfig.PARRY_TICKS).get()) {
+                if (state.elapsed >= (shield ? GuardShieldExpansionCompat.parryTicks(state.heldItem,GuardConfig.SHIELD_PARRY_TICKS.get()) : GuardConfig.PARRY_TICKS.get())) {
                     state.phase = GuardConfig.BLOCK.get() ? shield ? 4 : 3 : 0;
                     if (state.phase == 4) {
                         // Keep the existing use action so the shield pose never restarts.
-                        state.recharge = GuardConfig.SHIELD_RECHARGE_TICKS.get();
+                        state.recharge = GuardShieldExpansionCompat.cooldownTicks(state.heldItem,GuardConfig.SHIELD_RECHARGE_TICKS.get());
                         state.rechargeDuration = state.recharge;
                     } else if (state.phase == 3) { state.recharge = GuardConfig.RECHARGE_TICKS.get(); state.rechargeDuration = state.recharge; }
                     else {
@@ -239,7 +246,7 @@ public final class GuardState {
         state.guardReleaseRequired = true;
         boolean shieldBreak = GuardItemRules.shieldLike(state.heldItem);
         if (!shieldBreak || !player.getCooldowns().isOnCooldown(state.heldItem.getItem())) {
-            state.recharge = Math.max(GuardConfig.RECHARGE_TICKS.get(), GuardConfig.SHIELD_BREAK_TICKS.get());
+            state.recharge = Math.max(GuardConfig.RECHARGE_TICKS.get(), shieldBreak ? GuardShieldExpansionCompat.cooldownTicks(state.heldItem,GuardConfig.SHIELD_BREAK_TICKS.get()) : GuardConfig.SHIELD_BREAK_TICKS.get());
             state.rechargeDuration = state.recharge;
         }
         if (shieldBreak) {
@@ -256,10 +263,16 @@ public final class GuardState {
         if (speed == null) return;
         AttributeModifier modifier = speed.getModifier(GUARD_SLOWDOWN);
         int percent = GuardConfig.GUARD_MOVEMENT_PERCENT.get();
-        double amount = percent / 100.0D - 1.0D;
-        if (modifier != null && (!guarding || percent == 100 || modifier.amount() != amount))
+        double multiplier=percent/100.0D;
+        if(guarding && player.isUsingItem() && GuardItemRules.shieldLike(player.getUseItem())){
+            double shieldMovement=GuardShieldExpansionCompat.movement(player.getUseItem(),-1);
+            // Shield Expansion's speed stat compensates vanilla's 20% shield-use movement.
+            if(shieldMovement>=0)multiplier=shieldMovement/0.2D;
+        }
+        double amount=multiplier-1.0D;
+        if (modifier != null && (!guarding || multiplier == 1 || modifier.amount() != amount))
             speed.removeModifier(GUARD_SLOWDOWN);
-        if (guarding && percent < 100 && speed.getModifier(GUARD_SLOWDOWN) == null)
+        if (guarding && multiplier != 1 && speed.getModifier(GUARD_SLOWDOWN) == null)
             speed.addTransientModifier(new AttributeModifier(GUARD_SLOWDOWN, amount, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
     }
 
@@ -313,17 +326,18 @@ public final class GuardState {
         if (kind == SourceKind.FALL && result == Result.PERFECT && !GuardConfig.FALL_PERFECT_PARRY.get()) result = Result.PARRY;
         if (result == Result.BLOCK && !canBlock(kind) || result != Result.BLOCK && (!parryAllowed || !canParry(kind, result))) return Result.NONE;
         if (result == Result.BLOCK && !GuardItemRules.shieldLike(state.heldItem)) {
-            int max = GuardConfig.TOOL_MAX_BLOCKS.get();
+            int max = GuardItemBlockCounts.limit(state.heldItem, false);
             if (max > 0 && ++state.blocksTaken >= max) state.breakPending = true;
         }
         if (result == Result.PERFECT) state.recharge = 0;
         else if (result == Result.PARRY) state.recharge = Math.max(0,
-            (GuardItemRules.shieldLike(state.heldItem) ? GuardConfig.SHIELD_RECHARGE_TICKS : GuardConfig.RECHARGE_TICKS).get() / 2);
+            (GuardItemRules.shieldLike(state.heldItem) ? GuardShieldExpansionCompat.cooldownTicks(state.heldItem,GuardConfig.SHIELD_RECHARGE_TICKS.get()) : GuardConfig.RECHARGE_TICKS.get()) / 2);
         if (result == Result.PERFECT || result == Result.PARRY) {
             state.safetyThroughTick = GuardConfig.FOLLOW_UP_TICKS.get() == 0 ? -1 : player.level().getGameTime() + GuardConfig.FOLLOW_UP_TICKS.get();
             boolean shield = GuardItemRules.shieldLike(state.heldItem);
             if (shield) state.safetyThroughTick = -1;
             boolean keepBlocking = shield && GuardConfig.BLOCK.get();
+            GuardCombatEffects.healOnParry(player, result);
             state.held = keepBlocking;
             state.phase = keepBlocking ? 4 : 0;
             state.elapsed = 0;
@@ -343,7 +357,8 @@ public final class GuardState {
     public static boolean isShieldBlocking(ServerPlayer player) {
         GuardState state = STATES.get(player.getUUID());
         return state != null && state.held && state.phase == 4 && player.isUsingItem()
-            && player.getUsedItemHand() == state.guardHand && GuardItemRules.shieldLike(player.getUseItem());
+            && player.getUsedItemHand() == state.guardHand && GuardItemRules.shieldLike(player.getUseItem())
+            && !state.breakPending && !player.getCooldowns().isOnCooldown(player.getUseItem().getItem());
     }
 
     public static boolean shieldGuard(ServerPlayer player) {
@@ -354,7 +369,7 @@ public final class GuardState {
     public static void shieldBlocked(ServerPlayer player) {
         GuardState state = STATES.get(player.getUUID());
         if (state == null || state.phase != 4) return;
-        int max = GuardConfig.SHIELD_MAX_BLOCKS.get();
+        int max = GuardItemBlockCounts.limit(state.heldItem, true);
         if (max > 0 && ++state.blocksTaken >= max) state.breakPending = true;
     }
 
@@ -427,9 +442,15 @@ public final class GuardState {
 
     private static void sync(ServerPlayer player, GuardState state) {
         boolean shield = GuardItemRules.shieldLike(state.heldItem);
+        int window=(shield ? GuardShieldExpansionCompat.parryTicks(state.heldItem,GuardConfig.SHIELD_PARRY_TICKS.get()) : GuardConfig.PARRY_TICKS.get());
+        int duration=Math.max(1,state.rechargeDuration);
+        boolean offhand=state.guardHand==InteractionHand.OFF_HAND;
+        GuardPackets.Status previous=state.lastStatus;
+        if(previous!=null && previous.phase()==state.phase && previous.elapsed()==state.elapsed
+            && previous.recharge()==state.recharge && previous.window()==window
+            && previous.rechargeMax()==duration && previous.offhand()==offhand)return;
         GuardPackets.Status status = new GuardPackets.Status(state.phase, state.elapsed, state.recharge,
-            shield ? GuardConfig.SHIELD_PARRY_TICKS.get() : GuardConfig.PARRY_TICKS.get(),
-            Math.max(1, state.rechargeDuration), state.guardHand == InteractionHand.OFF_HAND);
+            window,duration,offhand);
         if (!status.equals(state.lastStatus)) {
             if (state.lastStatus == null || (state.lastStatus.phase() == 0) != (status.phase() == 0)
                 || state.lastStatus.offhand() != status.offhand())

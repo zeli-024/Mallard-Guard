@@ -71,6 +71,9 @@ final class GuardImpactFrame {
             vec2 blueUV = clamp(uv - shift, vec2(0.0), vec2(1.0));
             if (colorMode == 1) {
                 result = vec4(texture(scene, redUV).r, texture(scene, uv).g, texture(scene, blueUV).b, 1.0);
+            } else if (chromatic == 0.0) {
+                float ink = inkAt(uv);
+                result = vec4(vec3(ink), 1.0);
             } else result = vec4(inkAt(redUV), inkAt(uv), inkAt(blueUV), 1.0);
         }
         """;

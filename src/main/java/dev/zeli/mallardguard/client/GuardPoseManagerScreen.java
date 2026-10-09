@@ -46,8 +46,8 @@ final class GuardPoseManagerScreen extends Screen {
     }
     private void toggle(List<GuardPoseLibrary.Pose> targets,boolean enabled){for(var p:targets){p.enabled=enabled;p.values[0]=enabled?1:0;}commit();}
     @Override protected void init(){
-        w=Math.min(720,width-24);panelHeight=Math.min(360,height-24);
-        left=(width-w)/2;top=(height-panelHeight)/2;footer=top+panelHeight-30;
+        w=GuardUiLayout.wideWidth(width);top=GuardUiLayout.screenTop(height);panelHeight=height-top-6;
+        left=(width-w)/2;footer=top+panelHeight-30;
         split=left+w*40/100;listWidth=split-left-26;listTop=top+58;
         rows=Math.max(1,(footer-listTop-10)/25);trackHeight=rows*25;
         trackX=split-10;start=Math.clamp(start,0,Math.max(0,draft.poses.size()-rows));
@@ -64,9 +64,9 @@ final class GuardPoseManagerScreen extends Screen {
                     boolean chosen=selecting?selectedIds.contains(pose.id):pose.id.equals(focusedId),hover=isMouseOver(mx,my);
                     g.fill(getX(),getY(),getX()+getWidth(),getY()+getHeight(),chosen?0x98493E55:hover?0x785C4D68:0x28211B2A);
                     int nameX=getX()+7;
-                    if(selecting){int cx=getX()+5,cy=getY()+5;g.renderOutline(cx,cy,12,12,chosen?0xFFD8BEAA:0xFF947D9A);if(chosen)g.fill(cx+3,cy+3,cx+9,cy+9,0xFFFFFFFF);nameX+=17;}
+                    if(selecting){int cx=getX()+5,cy=getY()+5;g.renderOutline(cx,cy,12,12,chosen?GuardUi.WARM:GuardUi.BORDER);if(chosen)g.fill(cx+3,cy+3,cx+9,cy+9,0xFFFFFFFF);nameX+=17;}
                     else if(chosen)g.fill(getX()+1,getY()+2,getX()+3,getY()+getHeight()-2,0xFFFFFFFF);
-                    g.drawString(font,font.plainSubstrByWidth(pose.name,getWidth()-(nameX-getX())-9),nameX,getY()+7,pose.enabled?0xFFF5F0F6:0xFF978C9E);
+                    g.drawString(font,font.plainSubstrByWidth(pose.name,getWidth()-(nameX-getX())-9),nameX,getY()+7,pose.enabled?GuardUi.TEXT:0xFF978C9E);
                 }
             });
             row.setTooltip(Tooltip.create(Component.literal(pose.name+(pose.preset?" · Built-in preset":" · Custom preset"))));
@@ -87,27 +87,26 @@ final class GuardPoseManagerScreen extends Screen {
         boolean allEnabled=!targets.isEmpty()&&targets.stream().allMatch(p->p.enabled);
         actionButton(allEnabled?"On":"Off","",x,ay+step*3,bw,bh,()->toggle(targets,!allEnabled),allEnabled?"Disable selected presets.":"Enable selected presets.",editable&&!targets.isEmpty());
         actionButton("Delete","delete",x+bw+gap,ay+step*3,bw,bh,()->delete(targets),"Delete custom presets. Built-in presets cannot be deleted.",editable&&targets.stream().anyMatch(p->!p.preset));
+        button("?",left+w-116,footer,22,()->GuardUi.choices(this,"Preset Help","PRESETS\nChoose a preset to edit placement, motion or item assignments.\nCreate Preset adds your own animation.\n\nBATCH SELECTION\nSelect several presets to change their motion or assignments together.\nBuilt-in presets cannot be deleted.\n\nSAVING\nSave commits your edits. Preview only plays the draft.",new GuardUi.Choice("Back",()->Minecraft.getInstance().setScreen(this))),"Help with presets and batch editing.");
         button("Close",left+w-88,footer,80,this::onClose,"Close the preset menu.");
     }
     private void actionButton(String label,String symbol,int x,int y,int width,int height,Runnable action,String tip,boolean active){
         var b=addRenderableWidget(new Button(x,y,width,height,Component.literal(label),ignored->action.run(),message->message.get()){
             @Override public void renderWidget(GuiGraphics g,int mx,int my,float d){
                 GuardUi.paint(g,this,mx,my,false,false);
-                if(!symbol.isEmpty()&&getWidth()>=80)GuardUi.drawIcon(g,symbol,getX()+4,getY()+(getHeight()-12)/2,this.active?0xFFF5F0F6:0xFF766D7E);
+                if(!symbol.isEmpty()&&getWidth()>=80)GuardUi.drawIcon(g,symbol,getX()+4,getY()+(getHeight()-12)/2,this.active?GuardUi.TEXT:0xFF766D7E);
             }
         });b.active=active;b.setTooltip(Tooltip.create(Component.literal(tip)));
     }
     private int maxScroll(){return Math.max(0,draft.poses.size()-rows);}
-    private int thumbHeight(){return Math.max(12,trackHeight*rows/Math.max(rows,draft.poses.size()));}
-    private int thumbY(){return listTop+(maxScroll()==0?0:start*(trackHeight-thumbHeight())/maxScroll());}
+    private GuardUiLayout.Scrollbar scrollbar(){return new GuardUiLayout.Scrollbar(trackX,listTop,trackHeight,rows,draft.poses.size(),start);}
     private void scrollTo(double y){
-        int travel=trackHeight-thumbHeight();
-        int next=travel<=0?0:(int)Math.round((y-listTop-scrollGrab)*maxScroll()/travel);
+        int next=scrollbar().scrollAt(y,scrollGrab);
         next=Math.clamp(next,0,maxScroll());if(next!=start){start=next;rebuild();}
     }
     @Override public boolean mouseClicked(double x,double y,int button){
-        if(button==0&&maxScroll()>0&&x>=trackX-2&&x<trackX+5&&y>=listTop&&y<listTop+trackHeight){
-            draggingScroll=true;scrollGrab=y>=thumbY()&&y<thumbY()+thumbHeight()?y-thumbY():thumbHeight()/2.0;scrollTo(y);return true;
+        if(button==0&&scrollbar().contains(x,y)){
+            draggingScroll=true;scrollGrab=scrollbar().grab(y);scrollTo(y);return true;
         }return super.mouseClicked(x,y,button);
     }
     @Override public boolean mouseDragged(double x,double y,int button,double dx,double dy){if(draggingScroll&&button==0){scrollTo(y);return true;}return super.mouseDragged(x,y,button,dx,dy);}
@@ -118,17 +117,19 @@ final class GuardPoseManagerScreen extends Screen {
     @Override public void render(GuiGraphics g,int x,int y,float d){
         g.flush();renderBackground(g,x,y,d);g.flush();
         GuardUi.panel(g,left,top,w,panelHeight,false);
-        g.drawString(font,title,left+10,top+10,0xFFF5F0F6);
+        g.drawString(font,title,left+10,top+10,GuardUi.TEXT);
         GuardUi.panel(g,left+7,listTop-3,split-left-12,footer-listTop-3,true);
         GuardUi.panel(g,split+5,listTop-3,w-(split-left)-12,footer-listTop-3,false);
         var focus=draft.poses.stream().filter(p->p.id.equals(focusedId)).findFirst().orElse(null);
         String heading=selecting?selectedIds.size()+" selected":focus==null?"Select a preset":focus.name;
         int detailsWidth=left+w-split-44;
-        g.drawString(font,font.plainSubstrByWidth(heading,detailsWidth),split+10,listTop+3,0xFFF5F0F6);
+        g.drawString(font,font.plainSubstrByWidth(heading,detailsWidth),split+10,listTop+3,GuardUi.TEXT);
         g.drawString(font,draft.poses.size()+" presets",left+10,footer+6,0xFFC3B4CA);
-        if(maxScroll()>0){g.fill(trackX,listTop,trackX+3,listTop+trackHeight,0x4476647F);g.fill(trackX,thumbY(),trackX+3,thumbY()+thumbHeight(),0xFFD8BEAA);}
+        GuardUi.scrollbar(g,scrollbar(),x,y,draggingScroll);
         for(var widget:renderables)widget.render(g,x,y,d);
     }
     @Override public void onClose(){if(changed())GuardUi.choices(this,"Unsaved presets","",new GuardUi.Choice("Save",()->{if(applyDraft())Minecraft.getInstance().setScreen(parent);}),new GuardUi.Choice("Close",()->Minecraft.getInstance().setScreen(parent)),new GuardUi.Choice("Back",()->Minecraft.getInstance().setScreen(this)));else Minecraft.getInstance().setScreen(parent);}
-    @Override public boolean isPauseScreen(){return false;}
+    @Override public boolean isPauseScreen(){return parent.isPauseScreen();}
+    @Override public void removed(){draggingScroll=false;super.removed();}
+
 }

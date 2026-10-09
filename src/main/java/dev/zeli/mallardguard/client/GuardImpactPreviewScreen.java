@@ -96,13 +96,13 @@ final class GuardImpactPreviewScreen extends GuardPreviewScreen {
         beginPreview(graphics);
         {
         graphics.fill(left - 2, top, left + panelWidth + 2, top + panelHeight, 0xED211B2A);
-        graphics.fill(left - 2, top, left + panelWidth + 2, top + 1, 0xFF947D9A);
-        graphics.drawCenteredString(font, "IMPACT PREVIEW", width / 2, top + 7, 0xFFF5F0F6);
+        graphics.fill(left - 2, top, left + panelWidth + 2, top + 1, GuardUi.BORDER);
+        graphics.drawCenteredString(font, "IMPACT PREVIEW", width / 2, top + 7, GuardUi.TEXT);
         for (int i = 0; i < NAMES.length; i++) {
             String label = NAMES[i];
             int max = Math.min(120, panelWidth / 2 - 12);
             while (font.width(label) > max && label.length() > 1) label = label.substring(0, label.length() - 2) + "…";
-            graphics.drawString(font, label, left + 7, top + 69 + i * rowGap, 0xFFF5F0F6);
+            graphics.drawString(font, label, left + 7, top + 69 + i * rowGap, GuardUi.TEXT);
         }
         if (!shaderAvailable) graphics.drawCenteredString(font, "Impact filter unavailable on this renderer", width / 2,
             Math.max(3, top - 18), 0xFFFFAAAA);
@@ -136,25 +136,17 @@ final class GuardImpactPreviewScreen extends GuardPreviewScreen {
             updateMessage();
         }
 
-        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y))return false;value=Math.clamp(value+Math.signum(sy)*(hasShiftDown()?10:1)/400.0D,0,1);applyValue();updateMessage();return true;}
+        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y)||sy==0)return false;value=Math.clamp(value+Math.signum(sy)*(hasShiftDown()?10:1)/400.0D,0,1);valueChanged();change.accept((int)Math.round(value*400));updateMessage();return true;}
         @Override protected void updateMessage() {
             setMessage(Component.literal(Math.round(value * 400) + "%"));
         }
 
         @Override protected void applyValue() {
-            valueChanged();change.accept((int) Math.round(value * 400));
+            value=Math.round(value*40)/40.0D;valueChanged();change.accept((int) Math.round(value * 400));
         }
 
         @Override public void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-            int x = getX(), y = getY(), w = getWidth(), h = getHeight();
-            graphics.fill(x, y, x + w, y + h, isHoveredOrFocused() ? 0xFFD8BEAA : 0xFF947D9A);
-            graphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0xA0372D42);
-            int offset = (int) Math.round(value * (w - 10));
-            graphics.fill(x + 4, y + h - 5, x + w - 4, y + h - 3, 0xFF776581);
-            graphics.fill(x + 4, y + h - 5, x + 4 + offset, y + h - 3, 0xFFD8BEAA);
-            graphics.fill(x + 3 + offset, y + 2, x + 7 + offset, y + h - 6, 0xFFD8BEAA);
-            graphics.drawCenteredString(Minecraft.getInstance().font, getMessage(), x + w / 2, y + 4,
-                active ? 0xFFF5F0F6 : 0xFF978C9E);
+            GuardUi.slider(graphics,this,value,false);
         }
     }
 }

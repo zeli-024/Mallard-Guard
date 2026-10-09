@@ -1,0 +1,16 @@
+{
+  "textures": [
+    "mallardguard:center_impact/animation/frame_0",
+    "mallardguard:center_impact/animation/frame_1",
+    "mallardguard:center_impact/animation/frame_2",
+    "mallardguard:center_impact/animation/frame_3",
+    "mallardguard:center_impact/animation/frame_4",
+    "mallardguard:center_impact/animation/frame_5",
+    "mallardguard:center_impact/tint/frame_0",
+    "mallardguard:center_impact/tint/frame_1",
+    "mallardguard:center_impact/tint/frame_2",
+    "mallardguard:center_impact/tint/frame_3",
+    "mallardguard:center_impact/tint/frame_4",
+    "mallardguard:center_impact/tint/frame_5"
+  ]
+}

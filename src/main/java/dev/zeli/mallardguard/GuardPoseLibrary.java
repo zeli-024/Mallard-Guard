@@ -46,8 +46,9 @@ public final class GuardPoseLibrary {
         for(int i=0;i<a.size();i++)if(!samePose(a.get(i),b.get(i)))return false;
         return true;
     }
-    public static final int MAX_POSES=128;
-    public static Pose create(){Pose p=preset(0);p.id="pose_"+UUID.randomUUID().toString().replace("-","");p.name="";p.preset=false;p.values=new int[23];p.values[0]=1;p.values[19]=300;p.values[20]=360;p.values[21]=3;p.values[22]=100;return p;}
+    public static final int MAX_POSES=128, MAX_ITEMS=2048;
+    private static final int MAX_POSE_BYTES=1_048_576;
+    public static Pose create(){Pose p=preset(0);p.id="pose_"+UUID.randomUUID().toString().replace("-","");p.name="";p.preset=false;p.values=new int[23];p.values[0]=1;p.values[19]=150;p.values[20]=360;p.values[21]=3;p.values[22]=100;return p;}
     private GuardPoseLibrary() {}
     public static Path folder() { return FMLPaths.CONFIGDIR.get().resolve("mallard_guard/mg_punchy"); }
     public static synchronized long generation() { return generation; }
@@ -87,7 +88,7 @@ public final class GuardPoseLibrary {
                 .sorted(Comparator.comparing((Path f)->f.getFileName().toString().matches("(preset[1-5]|pose_[a-f0-9]{32})\\.json")).thenComparing(f->f.getFileName().toString())).toList();
             for(Path file:ordered){
                 try{
-                    if(Files.size(file)>65536)continue;Pose p=readPose(Files.readString(file));
+                    if(Files.size(file)>MAX_POSE_BYTES)continue;Pose p=readPose(Files.readString(file));
                     if(!valid(p)||!loadedIds.add(p.id))continue;
                     if(p.preset)found.set(Integer.parseInt(p.id.substring(6))-1,p);
                     else if(found.size()<MAX_POSES)found.add(p);
@@ -123,18 +124,23 @@ public final class GuardPoseLibrary {
             for(int i=1;i<=18;i++){double n=offsets.get(i-1).getAsDouble();if(!Double.isFinite(n)||n < -((i-1)%6<3?20:180)||n > ((i-1)%6<3?20:180))return null;int scale=(i-1)%6<3?10:1;pose.values[i]=Math.clamp(origin[i]+(int)Math.round(n*scale),GuardPoseSettings.min(i),GuardPoseSettings.max(i));}
         }
         if(tree.has("motion")&&pose.values!=null){int[] motion=JSON.fromJson(tree.get("motion"),int[].class);if(motion.length!=4)return null;System.arraycopy(motion,0,pose.values,19,4);}
+        if(pose.values!=null){int[] normalized=GuardPoseSettings.parsePose(GuardPoseSettings.encodePose(pose.values));if(normalized==null)return null;pose.values=normalized;}
         return pose;
     }
     private static String writePose(Pose p) {
         var tree=JSON.toJsonTree(p).getAsJsonObject();
         return JSON.toJson(tree);
     }
-    private static boolean validItems(List<String> items){return items!=null&&items.size()<=2048&&items.stream().allMatch(id->id!=null&&net.minecraft.resources.ResourceLocation.tryParse(id)!=null);}
+    private static boolean validItems(List<String> items){return items!=null&&items.size()<=MAX_ITEMS&&items.stream().allMatch(id->id!=null&&net.minecraft.resources.ResourceLocation.tryParse(id)!=null);}
     private static boolean valid(Pose p){return p!=null&&p.id!=null&&(p.preset?p.id.matches("preset[1-5]"):p.id.matches("pose_[a-f0-9]{32}"))&&p.name!=null&&!p.name.isBlank()&&p.name.length()<=64&&p.handMode>=0&&p.handMode<=2&&validItems(p.items)&&validItems(p.otherHandItems)&&validItems(p.weaponItems)&&p.values!=null&&GuardPoseSettings.parsePose(GuardPoseSettings.encodePose(p.values))!=null;}
     public static synchronized boolean save(List<Pose> poses) {
         if(poses.size()<GuardPoseSettings.COUNT||poses.size()>MAX_POSES||poses.stream().anyMatch(p->!valid(p)))return false;
+        for(Pose p:poses)p.values=GuardPoseSettings.parsePose(GuardPoseSettings.encodePose(p.values));
         Set<String> unique=new HashSet<>();for(Pose p:poses)if(!unique.add(p.id))return false;
         for(int i=1;i<=GuardPoseSettings.COUNT;i++)if(!unique.contains("preset"+i))return false;
+        // Check every serialized pose before writing any file. The reader uses the same limit.
+        Map<String,String> serialized=new HashMap<>();
+        for(Pose p:poses){String text=writePose(p);if(text.getBytes(StandardCharsets.UTF_8).length>MAX_POSE_BYTES)return false;serialized.put(p.id,text);}
         try {
             Path directory = folder().resolve("poses"); Files.createDirectories(directory);
             Set<String> ids = new HashSet<>(), names=new HashSet<>();
@@ -144,9 +150,10 @@ public final class GuardPoseLibrary {
                 String name=p.name.replaceAll("[\\\\/:*?\"<>|]","_").strip();if(name.isBlank())name=p.id;
                 String fileName=name+".json";int duplicate=0;while(!names.add(fileName.toLowerCase(Locale.ROOT)))fileName=name+" - "+p.id+(duplicate++==0?"":" - "+duplicate)+".json";
                 Path target=directory.resolve(fileName),temporary=directory.resolve(p.id+".tmp");written.add(target);
-                String contents = writePose(p);
-                if (Files.isRegularFile(target) && Files.size(target) <= 65536
+                String contents = serialized.get(p.id);
+                if (Files.isRegularFile(target) && Files.size(target) <= MAX_POSE_BYTES
                     && contents.equals(Files.readString(target, StandardCharsets.UTF_8))) continue;
+                GuardConfig.preserveClientFile(target);
                 Files.writeString(temporary, contents, StandardCharsets.UTF_8);
                 try { Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE); }
                 catch (AtomicMoveNotSupportedException ignored) { Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING); }
@@ -155,7 +162,7 @@ public final class GuardPoseLibrary {
             Set<String> managed=new HashSet<>(ids);for(Pose old:saved)managed.add(old.id);
             try(var files=Files.list(directory)){
                 for(Path file:files.filter(f->Files.isRegularFile(f)&&f.getFileName().toString().endsWith(".json")&&!written.contains(f)).toList()){
-                    try{if(Files.size(file)<=65536){Pose old=readPose(Files.readString(file));if(valid(old)&&managed.contains(old.id))Files.delete(file);}}catch(RuntimeException ignored){}
+                    try{if(Files.size(file)<=MAX_POSE_BYTES){Pose old=readPose(Files.readString(file));if(valid(old)&&managed.contains(old.id)){GuardConfig.preserveClientFile(file);Files.delete(file);}}}catch(RuntimeException ignored){}
                 }
             }
             saved = poses.stream().map(Pose::copy).toList(); generation++; return true;
@@ -186,7 +193,7 @@ public final class GuardPoseLibrary {
     }
     public static synchronized boolean saveEnforcedAnimations(String data){
         if(!data.isEmpty()&&parseAnimations(data)==null)return false;
-        try{Path path=FMLPaths.CONFIGDIR.get().resolve("mallard_guard/enforce/punchy_animations.json");Files.createDirectories(path.getParent());Path temporary=path.resolveSibling("punchy_animations.tmp");Files.writeString(temporary,data,StandardCharsets.UTF_8);try{Files.move(temporary,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}catch(AtomicMoveNotSupportedException e){Files.move(temporary,path,StandardCopyOption.REPLACE_EXISTING);}enforcedAnimations=data;return true;}catch(IOException e){return false;}
+        try{Path path=FMLPaths.CONFIGDIR.get().resolve("mallard_guard/enforce/punchy_animations.json");GuardConfig.preserveServerFile(path);Files.createDirectories(path.getParent());Path temporary=path.resolveSibling("punchy_animations.tmp");Files.writeString(temporary,data,StandardCharsets.UTF_8);try{Files.move(temporary,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}catch(AtomicMoveNotSupportedException e){Files.move(temporary,path,StandardCopyOption.REPLACE_EXISTING);}enforcedAnimations=data;return true;}catch(IOException e){return false;}
     }
     public static synchronized void clearEnforcedCache(){enforcedAnimations=null;}
 }

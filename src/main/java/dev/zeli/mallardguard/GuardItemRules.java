@@ -15,38 +15,84 @@ import net.minecraft.world.item.UseAnim;
 import net.minecraft.world.entity.player.Player;
 
 public final class GuardItemRules {
+    public static final int MAX_LENGTH=262_144;
     private GuardItemRules() {}
 
     private static final TagKey<Item> COMMON_SHIELDS = TagKey.create(Registries.ITEM, ResourceLocation.fromNamespaceAndPath("c", "tools/shields"));
     private static final TagKey<Item> FORGE_SHIELDS = TagKey.create(Registries.ITEM, ResourceLocation.fromNamespaceAndPath("forge", "shields"));
-    private record Rule(ResourceLocation id, TagKey<Item> tag) {}
+    private record Rule(ResourceLocation id, TagKey<Item> tag,String namespace,String keyword,boolean exclude) {}
     // Bound the cache because item rules may also come from a remote server.
-    private static final java.util.Map<String, java.util.List<Rule>> RULES = new java.util.LinkedHashMap<>(64, 0.75F, true);
+    private record Rules(java.util.Set<ResourceLocation> included,java.util.Set<ResourceLocation> excluded,java.util.List<Rule> groups) {}
+    private static int cachedCharacters;
+    private static final int CACHE_CHARACTERS=524_288;
+    private static final java.util.Map<String, Rules> RULES = new java.util.LinkedHashMap<>(64, 0.75F, true);
 
-    private static synchronized java.util.List<Rule> parsedRules(String text) {
-        java.util.List<Rule> cached = RULES.get(text);
-        if (cached != null) return cached;
+    /** One compiled list owned by a policy or editor. Group membership stays live. */
+    public static final class Compiled {
+        private final Rules rules;
+        private Compiled(Rules rules) { this.rules=rules; }
+        public boolean matches(ItemStack stack) { return matchesCompiled(stack,rules); }
+    }
+    /** Keeps the current list until its owner replaces it; unrelated previews cannot evict it. */
+    public static final class Source {
+        private String text;
+        private Compiled compiled;
+        public synchronized Compiled get(String value) {
+            if(!value.equals(text)){compiled=compile(value);text=value;}
+            return compiled;
+        }
+        public synchronized void clear() { text=null;compiled=null; }
+    }
+    private static final Source SERVER_INCLUDED=new Source(),SERVER_EXCLUDED=new Source();
+    private static final Source SERVER_SHIELDS=new Source(),SERVER_SHIELD_BLACKLIST=new Source();
+    private static final Source CLIENT_SHIELDS=new Source(),CLIENT_SHIELD_BLACKLIST=new Source();
+    public static boolean clientShieldLike(ItemStack stack,String whitelist,String blacklist) {
+        return shieldLike(stack,CLIENT_SHIELDS.get(whitelist),CLIENT_SHIELD_BLACKLIST.get(blacklist));
+    }
+    public static void clearClientShieldRules(){CLIENT_SHIELDS.clear();CLIENT_SHIELD_BLACKLIST.clear();}
+    public static boolean included(ItemStack stack) { return SERVER_INCLUDED.get(GuardConfig.INCLUDED_ITEMS.get()).matches(stack); }
+    public static boolean excluded(ItemStack stack) { return SERVER_EXCLUDED.get(GuardConfig.EXCLUDED_ITEMS.get()).matches(stack); }
+    public static void clearServerRules() { SERVER_INCLUDED.clear();SERVER_EXCLUDED.clear();SERVER_SHIELDS.clear();SERVER_SHIELD_BLACKLIST.clear(); }
+
+    public static Compiled compile(String text) {
         java.util.List<Rule> parsed = new java.util.ArrayList<>();
         for (String entry : text.split(",")) {
-            String value = entry.trim();
-            boolean tag = value.startsWith("#");
-            ResourceLocation id = ResourceLocation.tryParse(tag ? value.substring(1) : value);
-            if (id != null) parsed.add(new Rule(id, tag ? TagKey.create(Registries.ITEM, id) : null));
+            String value=entry.trim().toLowerCase(java.util.Locale.ROOT);
+            boolean exclude=value.startsWith("!");if(exclude)value=value.substring(1);
+            if(value.startsWith("@")){parsed.add(new Rule(null,null,value.substring(1),null,exclude));continue;}
+            if(!value.startsWith("#")&&!value.contains(":")){if(!value.isBlank())parsed.add(new Rule(null,null,null,value,exclude));continue;}
+            boolean tag=value.startsWith("#");ResourceLocation id=ResourceLocation.tryParse(tag?value.substring(1):value);
+            if(id!=null)parsed.add(new Rule(id,tag?TagKey.create(Registries.ITEM,id):null,null,null,exclude));
         }
-        cached = java.util.List.copyOf(parsed);
-        if (RULES.size() >= 64) RULES.remove(RULES.keySet().iterator().next());
-        RULES.put(text, cached);
+        var included=new java.util.HashSet<ResourceLocation>();var excluded=new java.util.HashSet<ResourceLocation>();
+        var groups=new java.util.ArrayList<Rule>();
+        for(Rule rule:parsed){if(rule.id()!=null&&rule.tag()==null)(rule.exclude()?excluded:included).add(rule.id());else groups.add(rule);}
+        Rules rules = new Rules(java.util.Set.copyOf(included),java.util.Set.copyOf(excluded),java.util.List.copyOf(groups));
+        return new Compiled(rules);
+    }
+    // Transient callers still have a bounded cache; active policies hold their own compiled lists.
+    private static synchronized Rules parsedRules(String text) {
+        Rules cached=RULES.get(text);
+        if(cached!=null)return cached;
+        cached=compile(text).rules;
+        while(!RULES.isEmpty()&&(RULES.size()>=64||cachedCharacters+text.length()>CACHE_CHARACTERS)){
+            String oldest=RULES.keySet().iterator().next();cachedCharacters-=oldest.length();RULES.remove(oldest);
+        }
+        if(text.length()<=CACHE_CHARACTERS){cachedCharacters+=text.length();RULES.put(text,cached);}
         return cached;
     }
 
     public static boolean shieldLike(ItemStack stack) {
-        return shieldLike(stack,GuardConfig.SHIELD_ITEMS.get(),GuardConfig.SHIELD_BLACKLIST.get());
+        return shieldLike(stack,SERVER_SHIELDS.get(GuardConfig.SHIELD_ITEMS.get()),SERVER_SHIELD_BLACKLIST.get(GuardConfig.SHIELD_BLACKLIST.get()));
     }
     public static boolean shieldLike(ItemStack stack,String whitelist,String blacklist) {
-        return !stack.isEmpty() && !matches(stack, blacklist) && (stack.is(Items.SHIELD)
+        return shieldLike(stack,new Compiled(parsedRules(whitelist)),new Compiled(parsedRules(blacklist)));
+    }
+    public static boolean shieldLike(ItemStack stack,Compiled whitelist,Compiled blacklist) {
+        return !stack.isEmpty() && !blacklist.matches(stack) && (stack.is(Items.SHIELD)
             || stack.is(COMMON_SHIELDS)
             || stack.is(FORGE_SHIELDS)
-            || matches(stack, whitelist)
+            || whitelist.matches(stack)
             || stack.getUseAnimation() == UseAnim.BLOCK && !hasAttackDamage(stack));
     }
 
@@ -80,21 +126,44 @@ public final class GuardItemRules {
     }
 
     public static boolean matches(ItemStack stack, String rules) {
-        if (rules.isBlank()) return false;
+        return !rules.isBlank() && matchesCompiled(stack,parsedRules(rules));
+    }
+    private static boolean matchesCompiled(ItemStack stack,Rules parsed) {
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
-        for (Rule rule : parsedRules(rules)) {
-            // Resolve membership live so datapack tag reloads do not need cache invalidation.
-            if (rule.tag() == null ? rule.id().equals(itemId) : stack.is(rule.tag())) return true;
+        if(parsed.excluded().contains(itemId))return false;
+        boolean included=parsed.included().contains(itemId);
+        for(Rule rule:parsed.groups()){
+            // Check live tag membership; matching exceptions take precedence regardless of order.
+            boolean match=rule.namespace()!=null?rule.namespace().equals(itemId.getNamespace())
+                :rule.keyword()!=null?itemId.toString().contains(rule.keyword())||stack.getTags().anyMatch(tag->tag.location().toString().contains(rule.keyword()))
+                :rule.tag()==null?rule.id().equals(itemId):stack.is(rule.tag());
+            if(match){if(rule.exclude())return false;included=true;}
         }
-        return false;
+        return included;
+    }
+
+    public static boolean validEntityRules(String rules){
+        if(rules==null||rules.length()>1024)return false;if(rules.isBlank())return true;
+        for(String entry:rules.split(",",-1)){String value=entry.trim();if(value.isEmpty()||value.startsWith("@")||ResourceLocation.tryParse(value.startsWith("#")?value.substring(1):value)==null)return false;}
+        return true;
+    }
+
+    public static boolean validEntityIds(String rules){
+        if(rules==null||rules.length()>1024)return false;if(rules.isBlank())return true;
+        for(String value:rules.split(",",-1))if(value.trim().isEmpty()||value.trim().startsWith("#")||value.trim().startsWith("@")||ResourceLocation.tryParse(value.trim())==null)return false;
+        return true;
     }
 
     public static boolean valid(String rules) {
-        if (rules == null || rules.length() > 1024) return false;
+        if (rules == null || rules.length() > MAX_LENGTH) return false;
         if (rules.isBlank()) return true;
         for (String entry : rules.split(",", -1)) {
             String value = entry.trim();
-            if (value.isEmpty() || ResourceLocation.tryParse(value.startsWith("#") ? value.substring(1) : value) == null) return false;
+            if(value.startsWith("!"))value=value.substring(1);
+            if(value.isEmpty())return false;
+            if(value.startsWith("@")){if(!value.substring(1).matches("[a-z0-9_.-]+"))return false;}
+            else if(value.startsWith("#")||value.contains(":")){if(ResourceLocation.tryParse(value.startsWith("#")?value.substring(1):value)==null)return false;}
+            else if(!value.matches("[a-z0-9_./-]+"))return false;
         }
         return true;
     }

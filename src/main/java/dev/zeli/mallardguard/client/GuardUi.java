@@ -9,26 +9,37 @@ import net.minecraft.network.chat.Component;
 
 /** Shared action colors and compact confirmation dialogs. */
 final class GuardUi {
-    static final int PANEL=0x92211B2A, SIDEBAR=0x962C2535, BORDER=0xFFA88FAE, TEXT=0xFFF5F0F6, MUTED=0xFFC3B4CA, WARM=0xFFD8BEAA;
+    static final int PANEL=0x92211B2A, SIDEBAR=0x962C2535, BORDER=0xFFA88FAE, TEXT=0xFFF5F0F6, MUTED=0xFFC3B4CA, WARM=0xFFD8BEAA, HIGHLIGHT=0xFFE7CD87;
     static void panel(GuiGraphics g,int x,int y,int width,int height,boolean sidebar){
         g.fill(x,y,x+width,y+height,sidebar?SIDEBAR:PANEL);
         g.renderOutline(x,y,width,height,BORDER);
         g.fill(x,y,x+width,y+2,WARM);
     }
+    static net.minecraft.client.gui.components.EditBox editBox(net.minecraft.client.gui.Font font,int x,int y,int width,String label){
+        return new net.minecraft.client.gui.components.EditBox(font,x,y,width,GuardUiLayout.CONTROL_HEIGHT,Component.literal(label));
+    }
+
+    static void scrollbar(GuiGraphics g,GuardUiLayout.Scrollbar bar,int mouseX,int mouseY,boolean dragging){
+        if(bar.max()==0)return;
+        g.fill(bar.x(),bar.y(),bar.x()+GuardUiLayout.SCROLL_WIDTH,bar.y()+bar.height(),0x77302737);
+        int color=dragging||bar.contains(mouseX,mouseY)?HIGHLIGHT:WARM;
+        g.fill(bar.x()+1,bar.thumbY(),bar.x()+GuardUiLayout.SCROLL_WIDTH-1,bar.thumbY()+bar.thumbHeight(),color);
+    }
+    static int dragStep(int min,int max,int divisor){return divisor==1 && (long)max-min>200?10:1;}
     static void slider(GuiGraphics g,net.minecraft.client.gui.components.AbstractSliderButton widget,double value,boolean changed){
         int x=widget.getX(),y=widget.getY(),w=widget.getWidth(),h=widget.getHeight();
         g.fill(x,y,x+w,y+h,0xA0211B2A);
-        g.renderOutline(x,y,w,h,changed?0xFFE7CD87:widget.isHoveredOrFocused()?WARM:0xFF947D9A);
+        g.renderOutline(x,y,w,h,changed?HIGHLIGHT:widget.isHoveredOrFocused()?HIGHLIGHT:BORDER);
         int thumb=x+2+(int)(value*(w-7));g.fill(thumb,y+2,thumb+4,y+h-2,widget.active?WARM:0xFF62566B);
         g.drawCenteredString(Minecraft.getInstance().font,widget.getMessage(),x+w/2,y+(h-8)/2,widget.active?TEXT:0xFF9B8EA4);
     }
     record Choice(String label, Runnable action) {}
     static int accent(String text) {
-        if(text.equals("Undo"))return 0xFFE7CD87;
+        if(text.equals("Undo"))return HIGHLIGHT;
         if(text.equals("On"))return 0xFFADD4AE;
         if (text.startsWith("Reset") || text.startsWith("Delete")) return 0xFFE79999;
         if (text.startsWith("Apply") || text.startsWith("Save") || text.startsWith("Confirm") || text.startsWith("Use")) return 0xFFADD4AE;
-        return 0xFF947D9A;
+        return BORDER;
     }
     static int body(String label,boolean hover,boolean active) {
         if(!active)return 0x69292431;
@@ -176,7 +187,7 @@ final class GuardUi {
         }
         @Override public void removed(){if(backdrop!=null){backdrop.destroyBuffers();backdrop=null;}}
         @Override public void onClose(){Minecraft.getInstance().setScreen(parent);}
-        @Override public boolean isPauseScreen(){return false;}
+        @Override public boolean isPauseScreen(){return parent.isPauseScreen();}
     }
     static void choices(Screen parent,String title,String message,Choice... choices) { Minecraft.getInstance().setScreen(new Dialog(parent,title,message,List.of(choices))); }
     static void confirm(Screen parent,String title,String message,Runnable yes) {
@@ -186,16 +197,24 @@ final class GuardUi {
         close.run();
     }
     private static final class Dialog extends Screen {
-        final Screen parent;final String message;final List<Choice> choices;int left,top,w,panelHeight;
+        final Screen parent;final String message;final List<Choice> choices;int left,top,w,panelHeight,buttonTop;
+        private List<net.minecraft.util.FormattedCharSequence> messageLines=List.of();
+        private int textScroll,visibleLines;private boolean draggingScroll;private double scrollGrab;
         Dialog(Screen parent,String title,String message,List<Choice> choices){super(Component.literal(title));this.parent=parent;this.message=message;this.choices=choices;}
         @Override protected void init(){
             int count=choices.size();boolean vertical=count>3;int widest=0;
             for(var choice:choices)widest=Math.max(widest,font.width(choice.label()));
-            w=Math.min(width-24,Math.max(font.width(title)+24,vertical?widest+40:(widest+20)*count+6*(count-1)+16));
-            left=(width-w)/2;panelHeight=vertical?42+count*24:62;top=Math.max(4,(height-panelHeight)/2);
+            w=Math.min(width-24,Math.max(280,Math.max(font.width(title)+24,vertical?widest+40:(widest+20)*count+6*(count-1)+16)));
+            vertical=vertical||(widest+20)*count+6*(count-1)+16>w;
+            messageLines=font.split(Component.literal(message),Math.max(1,w-28));
+            int actions=vertical?count*24:24;
+            visibleLines=Math.max(1,Math.min(messageLines.size(),(height-50-actions)/font.lineHeight));
+            textScroll=Math.max(0,Math.min(textScroll,messageLines.size()-visibleLines));
+            buttonTop=30+visibleLines*font.lineHeight;
+            left=(width-w)/2;panelHeight=buttonTop+actions+8;top=Math.max(4,(height-panelHeight)/2);
             int bw=vertical?w-16:(w-16-6*(count-1))/count;
             for(int i=0;i<count;i++){
-                var choice=choices.get(i);var b=addRenderableWidget(button(choice.label(),left+8+(vertical?0:i*(bw+6)),top+32+(vertical?i*24:0),bw,20,choice.action()));
+                var choice=choices.get(i);var b=addRenderableWidget(button(choice.label(),left+8+(vertical?0:i*(bw+6)),top+buttonTop+(vertical?i*24:0),bw,20,choice.action()));
                 String detail=switch(choice.label()){
                     case "Apply & Stay" -> "Save changes and keep this screen open.";
                     case "Apply & Close" -> "Save changes and close this screen.";
@@ -203,13 +222,25 @@ final class GuardUi {
                     case "Reset Section" -> "Reset this section to defaults. Apply to save.";
                     case "Go Back", "Cancel" -> "Return without performing this action.";
                     case "Discard" -> "Discard unsaved changes.";
-                    default -> message;
+                    default -> choice.label();
                 };
                 b.setTooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(detail)));
             }
         }
-        @Override public void render(GuiGraphics g,int x,int y,float d){g.flush();renderBackground(g,x,y,d);g.flush();g.fill(left,top,left+w,top+panelHeight,0xAA493E55);g.renderOutline(left,top,w,panelHeight,0xFF947D9A);g.drawCenteredString(font,title,width/2,top+11,0xFFF5F0F6);for(var widget:renderables)widget.render(g,x,y,d);}
+        private GuardUiLayout.Scrollbar scrollbar(){return new GuardUiLayout.Scrollbar(left+w-12,top+26,visibleLines*font.lineHeight,visibleLines,messageLines.size(),textScroll);}
+        @Override public boolean mouseClicked(double x,double y,int button){if(button==0&&scrollbar().contains(x,y)){draggingScroll=true;scrollGrab=scrollbar().grab(y);textScroll=scrollbar().scrollAt(y,scrollGrab);return true;}return super.mouseClicked(x,y,button);}
+        @Override public boolean mouseDragged(double x,double y,int button,double dx,double dy){if(button==0&&draggingScroll){textScroll=scrollbar().scrollAt(y,scrollGrab);return true;}return super.mouseDragged(x,y,button,dx,dy);}
+        @Override public boolean mouseReleased(double x,double y,int button){if(button==0&&draggingScroll){draggingScroll=false;return true;}return super.mouseReleased(x,y,button);}
+        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){
+            if(x>=left&&x<left+w&&y>=top+26&&y<top+buttonTop){textScroll=Math.max(0,Math.min(textScroll-(int)Math.signum(sy)*3,messageLines.size()-visibleLines));return true;}
+            return super.mouseScrolled(x,y,sx,sy);
+        }
+        @Override public void render(GuiGraphics g,int x,int y,float d){g.flush();renderBackground(g,x,y,d);g.flush();panel(g,left,top,w,panelHeight,false);g.drawCenteredString(font,title,width/2,top+11,0xFFF5F0F6);
+            for(int i=0;i<visibleLines&&textScroll+i<messageLines.size();i++)g.drawString(font,messageLines.get(textScroll+i),left+10,top+26+i*font.lineHeight,TEXT);
+            GuardUi.scrollbar(g,scrollbar(),x,y,draggingScroll);
+            for(var widget:renderables)widget.render(g,x,y,d);}
         @Override public void onClose(){Minecraft.getInstance().setScreen(parent);}
-        @Override public boolean isPauseScreen(){return false;}
+        @Override public void removed(){draggingScroll=false;super.removed();}
+        @Override public boolean isPauseScreen(){return parent.isPauseScreen();}
     }
 }

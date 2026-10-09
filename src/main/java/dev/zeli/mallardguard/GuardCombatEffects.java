@@ -43,6 +43,15 @@ public final class GuardCombatEffects {
 
     private GuardCombatEffects() {}
 
+    /** Once per consumed parry attempt; callers exclude follow-up safety hits. */
+    public static void healOnParry(LivingEntity defender, GuardState.Result result) {
+        if (defender.level().isClientSide || !GuardConfig.PARRY_HEALING.get()
+            || result != GuardState.Result.PARRY && result != GuardState.Result.PERFECT) return;
+        int hearts = GuardConfig.PARRY_HEALING_HEARTS.get();
+        if (hearts > 0) defender.heal(result == GuardState.Result.PERFECT ? hearts * 2.0F : hearts);
+    }
+
+
     public static boolean isOwnFallBlast(ServerPlayer player, DamageSource source) {
         return FALL_BLASTS.contains(player.getUUID()) && source.is(DamageTypeTags.IS_EXPLOSION);
     }
@@ -164,7 +173,8 @@ public final class GuardCombatEffects {
     }
 
     public static boolean stunned(Entity entity) {
-        return entity instanceof LivingEntity living && STUNNED.containsKey(living);
+        // Integrated clients share these statics with the server; never touch its weak map from the client thread.
+        return entity instanceof LivingEntity living && !entity.level().isClientSide && STUNNED.containsKey(living);
     }
 
     private static boolean rangedUse(ItemStack stack) {
@@ -196,8 +206,8 @@ public final class GuardCombatEffects {
     }
 
     public static void tickStun(EntityTickEvent.Post event) {
-        if (STUNNED.isEmpty()) return;
         if (!(event.getEntity() instanceof LivingEntity entity) || entity.level().isClientSide()) return;
+        if (STUNNED.isEmpty()) return;
         Integer ticks = STUNNED.get(entity);
         if (ticks == null) return;
         stopRangedUse(entity);
@@ -230,10 +240,11 @@ public final class GuardCombatEffects {
         Entity owner = projectile.getOwner();
         Vec3 sparkDirection = owner != null && owner != player ? owner.position().subtract(player.position())
             : projectile.getDeltaMovement().scale(-1.0D);
+        float particleDamage=GuardEffects.projectileDamageEstimate(projectile);
         reflectProjectile(player, projectile, result == GuardState.Result.PERFECT);
         PacketDistributor.sendToPlayer(player, new GuardPackets.HitResult(result == GuardState.Result.PERFECT ? 2 : result == GuardState.Result.BLOCK ? 3 : 1, GuardState.guardBreakPending(player), result == GuardState.Result.PERFECT ? GuardRetaliation.begin(player) : 0));
         GuardEffects.onHit(player, owner instanceof net.minecraft.world.entity.player.Player attackingPlayer ? player.damageSources().playerAttack(attackingPlayer)
-            : owner instanceof LivingEntity attackingMob ? player.damageSources().mobAttack(attackingMob) : player.damageSources().playerAttack(player), result, sparkDirection);
+            : owner instanceof LivingEntity attackingMob ? player.damageSources().mobAttack(attackingMob) : player.damageSources().playerAttack(player), result, sparkDirection,particleDamage);
         GuardState.wear(player, result);
         if (result != GuardState.Result.BLOCK) pushDefender(player, hit.getLocation(), shield);
         if (shield && result == GuardState.Result.PERFECT) {
@@ -261,7 +272,12 @@ public final class GuardCombatEffects {
         if (direction.lengthSqr() < 1.0E-6D) direction = player.getLookAngle();
         direction = direction.normalize();
         double speed = Math.max(1.4D, projectile.getDeltaMovement().length() * 1.1D);
+        if (projectile instanceof GuardTridentReturn trident) trident.mallardguard$rememberThrower(owner);
+        // Changing an arrow's owner can also change its pickup mode.
+        AbstractArrow.Pickup tridentPickup = projectile instanceof net.minecraft.world.entity.projectile.ThrownTrident trident
+            ? trident.pickup : null;
         projectile.setOwner(player);
+        if (tridentPickup != null) ((net.minecraft.world.entity.projectile.ThrownTrident) projectile).pickup = tridentPickup;
         projectile.setPos(player.getEyePosition().add(direction.scale(0.85D)));
         projectile.shoot(direction.x, direction.y, direction.z, (float) speed, 0.0F);
         projectile.hasImpulse = true;
@@ -280,14 +296,17 @@ public final class GuardCombatEffects {
         }
         boolean shield = GuardItemRules.shieldLike(mob.getItemInHand(GuardMobState.defenseHand(mob)));
         event.setCanceled(true);
-        reflectProjectile(mob, projectile, result == GuardState.Result.PERFECT);
+        float particleDamage=GuardEffects.projectileDamageEstimate(projectile);
+        // Keep incidental shots defensive; do not aim a perfect return at an unrelated mob.
+        boolean returnToOwner = !(owner instanceof net.minecraft.world.entity.Mob attacker) || GuardMobState.combatOpponent(mob, attacker);
+        reflectProjectile(mob, projectile, result == GuardState.Result.PERFECT && returnToOwner);
         DamageSource source = mob.damageSources().mobAttack(owner instanceof LivingEntity living ? living : mob);
-        GuardEffects.onMobHit(mob, source, result, shield);
+        GuardEffects.onMobHit(mob, source, result, shield,particleDamage);
         float amount = projectile instanceof AbstractArrow arrow ? (float) arrow.getBaseDamage() : 2.0F;
         GuardMobState.wear(mob, result, amount);
         if (result != GuardState.Result.BLOCK) {
             pushDefender(mob, hit.getLocation(), shield);
-            if (owner instanceof LivingEntity attacker) pushAttacker(mob, attacker, shield);
+            if (owner instanceof LivingEntity attacker && GuardMobState.combatOpponent(mob, attacker)) pushAttacker(mob, attacker, shield);
         }
     }
 }

@@ -15,6 +15,101 @@ import net.neoforged.neoforge.network.PacketDistributor;
 public final class GuardPackets {
     private GuardPackets() {}
 
+    /** Immutable RGB values; only these cosmetics are accepted from clients. */
+    public record Palette(int flying, int debris, int start, int middle, int end) {
+        public boolean valid() { return flying >= 0 && flying <= 0xFFFFFF && debris >= 0 && debris <= 0xFFFFFF
+            && start >= 0 && start <= 0xFFFFFF && middle >= 0 && middle <= 0xFFFFFF && end >= 0 && end <= 0xFFFFFF; }
+        public static Palette readLocal() {
+            return new Palette(GuardParticleColors.get(GuardParticleColors.BASE), GuardParticleColors.get(GuardParticleColors.DEBRIS_COLOR),
+                GuardParticleColors.get(GuardParticleColors.TRACER_START_COLOR), GuardParticleColors.get(GuardParticleColors.TRACER_MIDDLE_COLOR), GuardParticleColors.get(GuardParticleColors.TRACER_END_COLOR));
+        }
+        public static Palette fromPreset(int[] values) {
+            return new Palette(values[GuardParticleColors.BASE], values[GuardParticleColors.DEBRIS_COLOR],
+                values[GuardParticleColors.TRACER_START_COLOR], values[GuardParticleColors.TRACER_MIDDLE_COLOR], values[GuardParticleColors.TRACER_END_COLOR]);
+        }
+    }
+    private static void writePalette(RegistryFriendlyByteBuf buf, Palette colors) {
+        buf.writeInt(colors.flying()); buf.writeInt(colors.debris()); buf.writeInt(colors.start()); buf.writeInt(colors.middle()); buf.writeInt(colors.end());
+    }
+    private static Palette readPalette(RegistryFriendlyByteBuf buf) {
+        return new Palette(buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt());
+    }
+    public record SetPalette(Palette colors) implements CustomPacketPayload {
+        public static final Type<SetPalette> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "set_palette"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, SetPalette> CODEC = StreamCodec.of(
+            (buf, data) -> writePalette(buf, data.colors()), buf -> new SetPalette(readPalette(buf)));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+    /** A null palette removes a departed player. IDs survive respawns and dimension changes. */
+    public record PlayerPalette(int id, Palette colors) implements CustomPacketPayload {
+        public static final Type<PlayerPalette> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "player_palette"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, PlayerPalette> CODEC = StreamCodec.of(
+            (buf, data) -> { buf.writeVarInt(data.id()); buf.writeBoolean(data.colors() != null); if (data.colors() != null) writePalette(buf, data.colors()); },
+            buf -> new PlayerPalette(buf.readVarInt(), buf.readBoolean() ? readPalette(buf) : null));
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+    private record CachedPalette(int id, Palette personal, Palette effective) {}
+    // Accessed only on the server thread; never store players, entities or worlds in these entries.
+    private static final java.util.Map<java.util.UUID, CachedPalette> PLAYER_PALETTES = new java.util.HashMap<>();
+    private static int nextPaletteId = 1;
+    private static net.minecraft.server.MinecraftServer paletteServer;
+    private static Palette enforcedPalette;
+
+    public static void playerPalettesJoined(ServerPlayer player) {
+        paletteServer = player.serverLevel().getServer();
+        int id = playerPaletteId(player);
+        for (CachedPalette entry : PLAYER_PALETTES.values())
+            if (entry.id() != id) PacketDistributor.sendToPlayer(player, new PlayerPalette(entry.id(), entry.effective()));
+    }
+    public static int playerPaletteId(ServerPlayer player) {
+        CachedPalette entry = PLAYER_PALETTES.get(player.getUUID());
+        if (entry == null) {
+            paletteServer = player.serverLevel().getServer();
+            Palette personal = Palette.fromPreset(GuardClientPreset.DEFAULTS);
+            entry = new CachedPalette(nextPaletteId++, personal, enforcedPalette == null ? personal : enforcedPalette);
+            PLAYER_PALETTES.put(player.getUUID(), entry);
+            broadcastPalette(new PlayerPalette(entry.id(), entry.effective()));
+        }
+        return entry.id();
+    }
+    private static void receivePalette(SetPalette data, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player) || !data.colors().valid()) return;
+        int id = playerPaletteId(player);
+        CachedPalette previous = PLAYER_PALETTES.get(player.getUUID());
+        Palette effective = enforcedPalette == null ? data.colors() : enforcedPalette;
+        if (data.colors().equals(previous.personal()) && effective.equals(previous.effective())) return;
+        PLAYER_PALETTES.put(player.getUUID(), new CachedPalette(id, data.colors(), effective));
+        if (!effective.equals(previous.effective())) broadcastPalette(new PlayerPalette(id, effective));
+    }
+    private static void broadcastPalette(PlayerPalette data) {
+        if (paletteServer != null) for (ServerPlayer viewer : paletteServer.getPlayerList().getPlayers()) PacketDistributor.sendToPlayer(viewer, data);
+    }
+    private static void enforcePalettes(boolean locked, int[] values) {
+        enforcedPalette = locked ? Palette.fromPreset(values) : null;
+        PLAYER_PALETTES.replaceAll((uuid, previous) -> {
+            Palette effective = enforcedPalette == null ? previous.personal() : enforcedPalette;
+            if (effective.equals(previous.effective())) return previous;
+            broadcastPalette(new PlayerPalette(previous.id(), effective));
+            return new CachedPalette(previous.id(), previous.personal(), effective);
+        });
+    }
+    public static void forgetPlayerPalette(java.util.UUID uuid) {
+        CachedPalette removed = PLAYER_PALETTES.remove(uuid);
+        if (removed != null) broadcastPalette(new PlayerPalette(removed.id(), null));
+    }
+    public static void clearPlayerPalettes() {
+        PLAYER_PALETTES.clear(); paletteServer = null; enforcedPalette = null; nextPaletteId = 1;
+    }
+    /** Config reloads may arrive off-thread; distribute policy and palettes on the server thread. */
+    public static void refreshPalettePolicy() {
+        var server = paletteServer;
+        if (server != null) server.execute(() -> {
+            if (paletteServer != server) return;
+            ClientPolicy policy = clientPolicy();
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) sendConfigData(player, policy);
+        });
+    }
+
     public static final int SAVE_RULES = 1, SAVE_MOBS = 2, SAVE_SHIELD = 4, SAVE_DAMAGE = 8, SAVE_POLICY = 16;
     public record SaveConfig(int request, Save rules, SaveMobs mobs, SaveShield shield,
                              SaveDamageRules damage, SaveClientPolicy policy) implements CustomPacketPayload {
@@ -35,6 +130,111 @@ public final class GuardPackets {
         }
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
+    private static final int SAVE_CHUNK_BYTES=24_000, MAX_SAVE_BYTES=2_097_152;
+    private static final long UPLOAD_TIMEOUT=15_000_000_000L;
+    public record SaveChunk(int request,int total,int index,byte[] bytes) implements CustomPacketPayload {
+        public static final Type<SaveChunk> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID,"save_chunk"));
+        public static final StreamCodec<RegistryFriendlyByteBuf,SaveChunk> CODEC=StreamCodec.of(
+            (buf,data)->{buf.writeVarInt(data.request());buf.writeVarInt(data.total());buf.writeVarInt(data.index());buf.writeByteArray(data.bytes());},
+            buf->new SaveChunk(buf.readVarInt(),buf.readVarInt(),buf.readVarInt(),buf.readByteArray(SAVE_CHUNK_BYTES)));
+        @Override public Type<? extends CustomPacketPayload> type(){return TYPE;}
+    }
+    private static final class Upload {
+        final int request;final byte[][] parts;int next,size;long touched;
+        Upload(SaveChunk first){request=first.request();parts=new byte[first.total()][];touched=System.nanoTime();}
+        boolean append(SaveChunk chunk){
+            if(chunk.request()!=request||chunk.total()!=parts.length||chunk.index()!=next||size+chunk.bytes().length>MAX_SAVE_BYTES)return false;
+            parts[next++]=chunk.bytes();size+=chunk.bytes().length;touched=System.nanoTime();return true;
+        }
+        byte[] complete(){if(next!=parts.length)return null;byte[] data=new byte[size];int offset=0;for(byte[] part:parts){System.arraycopy(part,0,data,offset,part.length);offset+=part.length;}return data;}
+    }
+    private static final java.util.Map<java.util.UUID,Upload> UPLOADS=new java.util.HashMap<>();
+    public static void expireUploads(){if(UPLOADS.isEmpty())return;long now=System.nanoTime();UPLOADS.values().removeIf(upload->now-upload.touched>UPLOAD_TIMEOUT);}
+    public static void forgetUpload(java.util.UUID player){UPLOADS.remove(player);}
+    public static void clearUploads(){UPLOADS.clear();}
+    public static void sendConfig(SaveConfig request,net.minecraft.core.RegistryAccess registries){
+        RegistryFriendlyByteBuf buf=new RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.buffer(),registries);
+        try{
+            SaveConfig.CODEC.encode(buf,request);int size=buf.readableBytes();
+            if(size>MAX_SAVE_BYTES)throw new IllegalArgumentException("Config save is too large.");
+            int total=(size+SAVE_CHUNK_BYTES-1)/SAVE_CHUNK_BYTES;
+            for(int index=0;index<total;index++){byte[] bytes=new byte[Math.min(SAVE_CHUNK_BYTES,buf.readableBytes())];buf.readBytes(bytes);PacketDistributor.sendToServer(new SaveChunk(request.request(),total,index,bytes));}
+        }finally{buf.release();}
+    }
+    private static void saveChunk(SaveChunk chunk,IPayloadContext context){
+        if(!(context.player() instanceof ServerPlayer player))return;
+        if(!player.hasPermissions(2)){PacketDistributor.sendToPlayer(player,new SaveResult(chunk.request(),0,"Only operators can change server settings."));return;}
+        expireUploads();var id=player.getUUID();
+        if(chunk.total()<1||chunk.total()>(MAX_SAVE_BYTES+SAVE_CHUNK_BYTES-1)/SAVE_CHUNK_BYTES||chunk.index()<0||chunk.index()>=chunk.total()||chunk.bytes().length==0||chunk.bytes().length>SAVE_CHUNK_BYTES){UPLOADS.remove(id);return;}
+        if(chunk.index()==0){if(!UPLOADS.containsKey(id)&&UPLOADS.size()>=16){PacketDistributor.sendToPlayer(player,new SaveResult(chunk.request(),0,"Too many config uploads. Try again shortly."));return;}UPLOADS.put(id,new Upload(chunk));}
+        Upload upload=UPLOADS.get(id);
+        if(upload==null||!upload.append(chunk)){UPLOADS.remove(id);PacketDistributor.sendToPlayer(player,new SaveResult(chunk.request(),0,"Config upload was incomplete. Try again."));return;}
+        byte[] data=upload.complete();if(data==null)return;UPLOADS.remove(id);
+        RegistryFriendlyByteBuf buf=new RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.wrappedBuffer(data),player.registryAccess());
+        try{SaveConfig request=SaveConfig.CODEC.decode(buf);if(buf.readableBytes()!=0||request.request()!=chunk.request())throw new IllegalArgumentException("Invalid config upload.");saveConfig(request,context);}
+        catch(RuntimeException error){PacketDistributor.sendToPlayer(player,new SaveResult(chunk.request(),0,"Could not read config upload. Try again."));}
+        finally{buf.release();}
+    }
+    /** Bounded snapshots use the same small transport size in both directions. */
+    private record ConfigSnapshot(Settings rules,MobSettings mobs,ShieldSettings shield,DamageState damage,ClientPolicy policy) {
+        static final StreamCodec<RegistryFriendlyByteBuf,ConfigSnapshot> CODEC=StreamCodec.of(
+            (buf,data)->{writeOptional(buf,Settings.CODEC,data.rules());writeOptional(buf,MobSettings.CODEC,data.mobs());writeOptional(buf,ShieldSettings.CODEC,data.shield());writeOptional(buf,DamageState.CODEC,data.damage());writeOptional(buf,ClientPolicy.CODEC,data.policy());},
+            buf->new ConfigSnapshot(readOptional(buf,Settings.CODEC),readOptional(buf,MobSettings.CODEC),readOptional(buf,ShieldSettings.CODEC),readOptional(buf,DamageState.CODEC),readOptional(buf,ClientPolicy.CODEC)));
+    }
+    public record SnapshotChunk(int request,int total,int index,byte[] bytes) implements CustomPacketPayload {
+        public static final Type<SnapshotChunk> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID,"snapshot_chunk"));
+        public static final StreamCodec<RegistryFriendlyByteBuf,SnapshotChunk> CODEC=StreamCodec.of(
+            (buf,data)->{buf.writeVarInt(data.request());buf.writeVarInt(data.total());buf.writeVarInt(data.index());buf.writeByteArray(data.bytes());},
+            buf->new SnapshotChunk(buf.readVarInt(),buf.readVarInt(),buf.readVarInt(),buf.readByteArray(SAVE_CHUNK_BYTES)));
+        @Override public Type<? extends CustomPacketPayload> type(){return TYPE;}
+    }
+    private static int nextSnapshot;
+    private static Upload clientSnapshot;
+    public static void clearClientSnapshot(){clientSnapshot=null;}
+    public static void expireClientSnapshot(){if(clientSnapshot!=null&&System.nanoTime()-clientSnapshot.touched>UPLOAD_TIMEOUT)clearClientSnapshot();}
+    private static void sendSnapshot(ServerPlayer player,ConfigSnapshot snapshot) {
+        RegistryFriendlyByteBuf buf=new RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.buffer(),player.registryAccess());
+        try{
+            ConfigSnapshot.CODEC.encode(buf,snapshot);int size=buf.readableBytes();
+            if(size>MAX_SAVE_BYTES)throw new IllegalArgumentException("Config snapshot is too large.");
+            int total=(size+SAVE_CHUNK_BYTES-1)/SAVE_CHUNK_BYTES,request=++nextSnapshot;
+            for(int index=0;index<total;index++){
+                byte[] bytes=new byte[Math.min(SAVE_CHUNK_BYTES,buf.readableBytes())];buf.readBytes(bytes);
+                PacketDistributor.sendToPlayer(player,new SnapshotChunk(request,total,index,bytes));
+            }
+        }finally{buf.release();}
+    }
+    public static void sendConfigData(ServerPlayer player,CustomPacketPayload payload) {
+        if(payload instanceof Settings data)sendSnapshot(player,new ConfigSnapshot(data,null,null,null,null));
+        else if(payload instanceof MobSettings data)sendSnapshot(player,new ConfigSnapshot(null,data,null,null,null));
+        else if(payload instanceof ShieldSettings data)sendSnapshot(player,new ConfigSnapshot(null,null,data,null,null));
+        else if(payload instanceof DamageState data)sendSnapshot(player,new ConfigSnapshot(null,null,null,data,null));
+        else if(payload instanceof ClientPolicy data)sendSnapshot(player,new ConfigSnapshot(null,null,null,null,data));
+        else throw new IllegalArgumentException("Not a config snapshot payload.");
+    }
+    public static void sendInitialConfig(ServerPlayer player){
+        sendSnapshot(player,new ConfigSnapshot(GuardConfig.snapshot(player.hasPermissions(2)),GuardConfig.mobSnapshot(false),GuardConfig.shieldSnapshot(),null,clientPolicy()));
+    }
+    private static void receiveSnapshot(SnapshotChunk chunk,IPayloadContext context) {
+        expireClientSnapshot();
+        if(chunk.total()<1||chunk.total()>(MAX_SAVE_BYTES+SAVE_CHUNK_BYTES-1)/SAVE_CHUNK_BYTES||chunk.index()<0||chunk.index()>=chunk.total()||chunk.bytes().length==0||chunk.bytes().length>SAVE_CHUNK_BYTES){clearClientSnapshot();return;}
+        SaveChunk part=new SaveChunk(chunk.request(),chunk.total(),chunk.index(),chunk.bytes());
+        if(chunk.index()==0)clientSnapshot=new Upload(part);
+        if(clientSnapshot==null||!clientSnapshot.append(part)){clearClientSnapshot();return;}
+        byte[] bytes=clientSnapshot.complete();if(bytes==null)return;clearClientSnapshot();
+        RegistryFriendlyByteBuf buf=new RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.wrappedBuffer(bytes),context.player().registryAccess());
+        try{
+            ConfigSnapshot snapshot=ConfigSnapshot.CODEC.decode(buf);
+            if(buf.readableBytes()!=0)throw new IllegalArgumentException("Trailing config snapshot data.");
+            if(snapshot.policy()!=null)GuardClient.clientPolicy(snapshot.policy());
+            if(snapshot.mobs()!=null)GuardClient.mobSettings(snapshot.mobs());
+            if(snapshot.rules()!=null)GuardClient.settings(snapshot.rules());
+            if(snapshot.shield()!=null)GuardClient.shieldSettings(snapshot.shield());
+            if(snapshot.damage()!=null)GuardClient.damageState(snapshot.damage());
+        }catch(RuntimeException error){System.err.println("Mallard Guard: could not read config snapshot: "+error.getMessage());}
+        finally{buf.release();}
+    }
+
     public record SaveResult(int request, int accepted, String error) implements CustomPacketPayload {
         public static final Type<SaveResult> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "save_result"));
         public static final StreamCodec<RegistryFriendlyByteBuf, SaveResult> CODEC = StreamCodec.of(
@@ -49,13 +249,6 @@ public final class GuardPackets {
     private static <T> T readOptional(RegistryFriendlyByteBuf buf, StreamCodec<RegistryFriendlyByteBuf, T> codec) {
         return buf.readBoolean() ? codec.decode(buf) : null;
     }
-    private static boolean attemptSave(java.util.function.BooleanSupplier action) {
-        try { return action.getAsBoolean(); }
-        catch (RuntimeException error) {
-            System.err.println("Mallard Guard: server config save failed: " + error.getMessage());
-            return false;
-        }
-    }
     private static void saveConfig(SaveConfig data, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player)) return;
         if (!player.hasPermissions(2)) {
@@ -63,11 +256,14 @@ public final class GuardPackets {
             return;
         }
         int accepted = 0;
-        if (data.rules() != null && attemptSave(() -> save(data.rules(), context))) accepted |= SAVE_RULES;
-        if (data.mobs() != null && attemptSave(() -> saveMobs(data.mobs(), context))) accepted |= SAVE_MOBS;
-        if (data.shield() != null && attemptSave(() -> saveShield(data.shield(), context))) accepted |= SAVE_SHIELD;
-        if (data.damage() != null && attemptSave(() -> saveDamageRules(data.damage(), context))) accepted |= SAVE_DAMAGE;
-        if (data.policy() != null && attemptSave(() -> saveClientPolicy(data.policy(), context))) accepted |= SAVE_POLICY;
+        try(GuardConfig.ServerEdit edit=new GuardConfig.ServerEdit()) {
+            if(data.rules()!=null&&edit.attempt(()->save(data.rules(),context)))accepted|=SAVE_RULES;
+            if(data.mobs()!=null&&edit.attempt(()->saveMobs(data.mobs(),context)))accepted|=SAVE_MOBS;
+            if(data.shield()!=null&&edit.attempt(()->saveShield(data.shield(),context)))accepted|=SAVE_SHIELD;
+            if(data.damage()!=null&&edit.attempt(()->saveDamageRules(data.damage(),context)))accepted|=SAVE_DAMAGE;
+            if(data.policy()!=null&&edit.attempt(()->saveClientPolicy(data.policy(),context)))accepted|=SAVE_POLICY;
+            if(!edit.commit())accepted=0;
+        }catch(RuntimeException error){accepted=0;System.err.println("Mallard Guard: config request failed: "+error.getMessage());}
         int rejected = data.mask() & ~accepted;
         java.util.List<String> sections = new java.util.ArrayList<>();
         if ((rejected & SAVE_RULES) != 0) sections.add("server rules");
@@ -139,7 +335,7 @@ public final class GuardPackets {
 
     public record ShieldSettings(int perfect, int window, int rechargeTicks, int maxBlocks, int toolMaxBlocks, int breakTicks, int cone, int reach,
         int retaliation, int stunTicks, int perfectPushback, int regularPushback, int weaponPushback,
-        String stunnableBosses, boolean consumablePriority, boolean cooldownPreventsGuard, boolean allowEmptyHand, int retaliationCap, int shieldParryPriority, boolean coneSparks, int parryHandPriority, boolean forceCrouchOffhand, String shieldBlacklist) implements CustomPacketPayload {
+        String stunnableBosses, boolean consumablePriority, boolean cooldownPreventsGuard, boolean allowEmptyHand, int retaliationCap, int shieldParryPriority, int parryHandPriority, boolean forceCrouchOffhand, String shieldBlacklist, String itemBlockCounts, boolean shieldExpansionActive) implements CustomPacketPayload {
         public static final Type<ShieldSettings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "shield_settings"));
         public static final StreamCodec<RegistryFriendlyByteBuf, ShieldSettings> CODEC = StreamCodec.of(
             GuardPackets::writeShield, GuardPackets::readShield);
@@ -159,16 +355,16 @@ public final class GuardPackets {
         buf.writeVarInt(data.stunTicks()); buf.writeVarInt(data.perfectPushback());
         buf.writeVarInt(data.regularPushback()); buf.writeVarInt(data.weaponPushback());
         buf.writeUtf(data.stunnableBosses(), 1024); buf.writeBoolean(data.consumablePriority()); buf.writeBoolean(data.cooldownPreventsGuard()); buf.writeBoolean(data.allowEmptyHand());
-        buf.writeVarInt(data.retaliationCap()); buf.writeVarInt(data.shieldParryPriority()); buf.writeBoolean(data.coneSparks()); buf.writeVarInt(data.parryHandPriority()); buf.writeBoolean(data.forceCrouchOffhand()); buf.writeUtf(data.shieldBlacklist(), 1024);
+        buf.writeVarInt(data.retaliationCap()); buf.writeVarInt(data.shieldParryPriority()); buf.writeVarInt(data.parryHandPriority()); buf.writeBoolean(data.forceCrouchOffhand()); buf.writeUtf(data.shieldBlacklist(), GuardItemRules.MAX_LENGTH); buf.writeUtf(data.itemBlockCounts(), GuardItemBlockCounts.MAX_LENGTH); buf.writeBoolean(data.shieldExpansionActive());
     }
 
     private static ShieldSettings readShield(RegistryFriendlyByteBuf buf) {
         return new ShieldSettings(buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(),
             buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(),
-            buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readUtf(1024), buf.readBoolean(), buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readBoolean(), buf.readVarInt(), buf.readBoolean(), buf.readUtf(1024));
+            buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readUtf(1024), buf.readBoolean(), buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readBoolean(), buf.readUtf(GuardItemRules.MAX_LENGTH), buf.readUtf(GuardItemBlockCounts.MAX_LENGTH), buf.readBoolean());
     }
 
-    public record MobSettings(boolean enabled, int difficulty, boolean blocking, boolean retaliation, int parryColor, int perfectColor, int hitsBeforeGuard, int perfectTicks, int parryTicks, int counterTicks, int approachChance, int tacticalChance, int tacticalSeconds, int tacticalCooldownTicks, String humanoidIds, String blacklist, int movement, int approachDistance, int approachSeconds, int rushChance, int gearChance) implements CustomPacketPayload {
+    public record MobSettings(boolean enabled, int difficulty, String whitelist, int gearChance, String gearWhitelist, String gearBlacklist, int tracerStartColor, int tracerMiddleColor, int tracerEndColor) implements CustomPacketPayload {
         public static final Type<MobSettings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "mob_settings"));
         public static final StreamCodec<RegistryFriendlyByteBuf, MobSettings> CODEC = StreamCodec.of(GuardPackets::writeMobs, GuardPackets::readMobs);
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
@@ -180,10 +376,12 @@ public final class GuardPackets {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
     private static void writeMobs(RegistryFriendlyByteBuf buf, MobSettings data) {
-        buf.writeBoolean(data.enabled()); buf.writeVarInt(data.difficulty()); buf.writeBoolean(data.blocking()); buf.writeBoolean(data.retaliation()); buf.writeVarInt(data.parryColor()); buf.writeVarInt(data.perfectColor()); buf.writeVarInt(data.hitsBeforeGuard()); buf.writeVarInt(data.perfectTicks()); buf.writeVarInt(data.parryTicks()); buf.writeVarInt(data.counterTicks()); buf.writeVarInt(data.approachChance()); buf.writeVarInt(data.tacticalChance()); buf.writeVarInt(data.tacticalSeconds()); buf.writeVarInt(data.tacticalCooldownTicks()); buf.writeUtf(data.humanoidIds()); buf.writeUtf(data.blacklist(), 1024); buf.writeVarInt(data.movement()); buf.writeVarInt(data.approachDistance()); buf.writeVarInt(data.approachSeconds()); buf.writeVarInt(data.rushChance()); buf.writeVarInt(data.gearChance());
+        buf.writeBoolean(data.enabled());buf.writeVarInt(data.difficulty());buf.writeUtf(data.whitelist(),1024);
+        buf.writeVarInt(data.gearChance());buf.writeUtf(data.gearWhitelist(),GuardItemRules.MAX_LENGTH);buf.writeUtf(data.gearBlacklist(),GuardItemRules.MAX_LENGTH);
+        buf.writeInt(data.tracerStartColor());buf.writeInt(data.tracerMiddleColor());buf.writeInt(data.tracerEndColor());
     }
     private static MobSettings readMobs(RegistryFriendlyByteBuf buf) {
-        return new MobSettings(buf.readBoolean(), buf.readVarInt(), buf.readBoolean(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readUtf(1024), buf.readUtf(1024), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt());
+        return new MobSettings(buf.readBoolean(),buf.readVarInt(),buf.readUtf(1024),buf.readVarInt(),buf.readUtf(GuardItemRules.MAX_LENGTH),buf.readUtf(GuardItemRules.MAX_LENGTH),buf.readInt(),buf.readInt(),buf.readInt());
     }
     public record MobCounter(boolean perfect) implements CustomPacketPayload {
         public static final Type<MobCounter> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "mob_counter"));
@@ -262,13 +460,17 @@ public final class GuardPackets {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record Sparks(double x, double y, double z, int count, boolean perfect,
-                         boolean shield, boolean fall, double directionX, double directionZ, boolean defender, int tint) implements CustomPacketPayload {
-        public static final Type<Sparks> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "sparks"));
-        public static final StreamCodec<RegistryFriendlyByteBuf, Sparks> CODEC = StreamCodec.of(
-            (buf, data) -> { buf.writeDouble(data.x); buf.writeDouble(data.y); buf.writeDouble(data.z); buf.writeVarInt(data.count); buf.writeBoolean(data.perfect); buf.writeBoolean(data.shield); buf.writeBoolean(data.fall); buf.writeDouble(data.directionX); buf.writeDouble(data.directionZ); buf.writeBoolean(data.defender); buf.writeInt(data.tint); },
-            buf -> new Sparks(buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readVarInt(), buf.readBoolean(), buf.readBoolean(), buf.readBoolean(), buf.readDouble(), buf.readDouble(), buf.readBoolean(), buf.readInt()));
-        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    public record Sparks(double x,double y,double z,boolean perfect,boolean defender,float damage,float facingX,float facingY,float facingZ,boolean shield,boolean fall,int paletteId,int tracerStartColor,int tracerMiddleColor,int tracerEndColor) implements CustomPacketPayload {
+        public static final Type<Sparks> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID,"sparks"));
+        public static final StreamCodec<RegistryFriendlyByteBuf,Sparks> CODEC=StreamCodec.of(
+            (buf,data)->{buf.writeDouble(data.x);buf.writeDouble(data.y);buf.writeDouble(data.z);buf.writeBoolean(data.perfect);buf.writeBoolean(data.defender);buf.writeFloat(data.damage);buf.writeFloat(data.facingX);buf.writeFloat(data.facingY);buf.writeFloat(data.facingZ);buf.writeBoolean(data.shield);buf.writeBoolean(data.fall);buf.writeVarInt(data.paletteId);
+                boolean colored=data.tracerStartColor>=0;buf.writeBoolean(colored);if(colored){buf.writeInt(data.tracerStartColor);buf.writeInt(data.tracerMiddleColor);buf.writeInt(data.tracerEndColor);}},GuardPackets::readSparks);
+        @Override public Type<? extends CustomPacketPayload> type(){return TYPE;}
+    }
+    private static Sparks readSparks(RegistryFriendlyByteBuf buf){
+        double x=buf.readDouble(),y=buf.readDouble(),z=buf.readDouble();boolean perfect=buf.readBoolean(),defender=buf.readBoolean();
+        float damage=buf.readFloat(),fx=buf.readFloat(),fy=buf.readFloat(),fz=buf.readFloat();boolean shield=buf.readBoolean(),fall=buf.readBoolean();int paletteId=buf.readVarInt();boolean colored=buf.readBoolean();
+        return new Sparks(x,y,z,perfect,defender,damage,fx,fy,fz,shield,fall,paletteId,colored?buf.readInt():-1,colored?buf.readInt():-1,colored?buf.readInt():-1);
     }
 
     public record HitSound(double x, double y, double z, int kind, int variant, float volume,
@@ -280,7 +482,7 @@ public final class GuardPackets {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record Settings(boolean parry, boolean block, boolean parryDrowningFire, boolean parryStarvation, boolean parryGenericKill, int perfect, int window, int recharge, int angle, int reductionPercent, int followUp, int parryReturnPercent, int perfectReturnPercent, int parryWear, int perfectWear, int blockWear, boolean hitSounds, boolean hitParticles, int masterVolume, int perfectVolume, int parryVolume, int blockVolume, boolean fallParry, boolean fallPerfectParry, boolean fallLookDown, boolean fallBreakBlocks, int fallBlastStrength, int fallLaunchPower, boolean parryExplosions, boolean perfectExplosionsOnly, boolean blockExplosions, boolean parryProjectiles, boolean blockProjectiles, boolean defenderKnockback, int knockbackStrength, int guardMovementPercent, int blockDeflectChance, boolean allowAnyItem, boolean allowUsableItems, String includedItems, String excludedItems, String shieldItems, boolean consumablePriority, boolean operator) implements CustomPacketPayload {
+    public record Settings(boolean parry, boolean block, boolean parryDrowningFire, boolean parryStarvation, boolean parryGenericKill, int perfect, int window, int recharge, int angle, int reductionPercent, int followUp, int parryReturnPercent, int perfectReturnPercent, int parryWear, int perfectWear, int blockWear, boolean hitSounds, boolean hitParticles, int masterVolume, int perfectVolume, int parryVolume, int blockVolume, boolean fallParry, boolean fallPerfectParry, boolean fallLookDown, boolean fallBreakBlocks, int fallBlastStrength, int fallLaunchPower, boolean parryExplosions, boolean perfectExplosionsOnly, boolean blockExplosions, boolean parryProjectiles, boolean blockProjectiles, boolean defenderKnockback, int knockbackStrength, int guardMovementPercent, int blockDeflectChance, boolean allowAnyItem, boolean allowUsableItems, String includedItems, String excludedItems, String shieldItems, boolean consumablePriority, boolean operator, boolean parryHealing, int parryHealingHearts) implements CustomPacketPayload {
         public static final Type<Settings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "settings"));
         public static final StreamCodec<RegistryFriendlyByteBuf, Settings> CODEC = StreamCodec.of(
             (buf, data) -> {
@@ -301,12 +503,13 @@ public final class GuardPackets {
                 writeSources(buf, data.fallParry, data.fallPerfectParry, data.fallLookDown, data.fallBreakBlocks, data.fallBlastStrength, data.fallLaunchPower, data.parryExplosions, data.perfectExplosionsOnly, data.blockExplosions, data.parryProjectiles, data.blockProjectiles, data.defenderKnockback, data.knockbackStrength, data.guardMovementPercent, data.blockDeflectChance);
                 writeItemRules(buf, data.allowAnyItem, data.allowUsableItems, data.includedItems, data.excludedItems, data.shieldItems, data.consumablePriority);
                 buf.writeBoolean(data.operator);
+                buf.writeBoolean(data.parryHealing); buf.writeVarInt(data.parryHealingHearts);
             },
             buf -> readSettings(buf, true));
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record Save(boolean parry, boolean block, boolean parryDrowningFire, boolean parryStarvation, boolean parryGenericKill, int perfect, int window, int recharge, int angle, int reductionPercent, int followUp, int parryReturnPercent, int perfectReturnPercent, int parryWear, int perfectWear, int blockWear, boolean hitSounds, boolean hitParticles, int masterVolume, int perfectVolume, int parryVolume, int blockVolume, boolean fallParry, boolean fallPerfectParry, boolean fallLookDown, boolean fallBreakBlocks, int fallBlastStrength, int fallLaunchPower, boolean parryExplosions, boolean perfectExplosionsOnly, boolean blockExplosions, boolean parryProjectiles, boolean blockProjectiles, boolean defenderKnockback, int knockbackStrength, int guardMovementPercent, int blockDeflectChance, boolean allowAnyItem, boolean allowUsableItems, String includedItems, String excludedItems, String shieldItems, boolean consumablePriority) implements CustomPacketPayload {
+    public record Save(boolean parry, boolean block, boolean parryDrowningFire, boolean parryStarvation, boolean parryGenericKill, int perfect, int window, int recharge, int angle, int reductionPercent, int followUp, int parryReturnPercent, int perfectReturnPercent, int parryWear, int perfectWear, int blockWear, boolean hitSounds, boolean hitParticles, int masterVolume, int perfectVolume, int parryVolume, int blockVolume, boolean fallParry, boolean fallPerfectParry, boolean fallLookDown, boolean fallBreakBlocks, int fallBlastStrength, int fallLaunchPower, boolean parryExplosions, boolean perfectExplosionsOnly, boolean blockExplosions, boolean parryProjectiles, boolean blockProjectiles, boolean defenderKnockback, int knockbackStrength, int guardMovementPercent, int blockDeflectChance, boolean allowAnyItem, boolean allowUsableItems, String includedItems, String excludedItems, String shieldItems, boolean consumablePriority, boolean parryHealing, int parryHealingHearts) implements CustomPacketPayload {
         public static final Type<Save> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "save"));
         public static final StreamCodec<RegistryFriendlyByteBuf, Save> CODEC = StreamCodec.of(
             (buf, data) -> {
@@ -326,6 +529,7 @@ public final class GuardPackets {
                 buf.writeVarInt(data.masterVolume); buf.writeVarInt(data.perfectVolume); buf.writeVarInt(data.parryVolume); buf.writeVarInt(data.blockVolume);
                 writeSources(buf, data.fallParry, data.fallPerfectParry, data.fallLookDown, data.fallBreakBlocks, data.fallBlastStrength, data.fallLaunchPower, data.parryExplosions, data.perfectExplosionsOnly, data.blockExplosions, data.parryProjectiles, data.blockProjectiles, data.defenderKnockback, data.knockbackStrength, data.guardMovementPercent, data.blockDeflectChance);
                 writeItemRules(buf, data.allowAnyItem, data.allowUsableItems, data.includedItems, data.excludedItems, data.shieldItems, data.consumablePriority);
+                buf.writeBoolean(data.parryHealing); buf.writeVarInt(data.parryHealingHearts);
             },
             GuardPackets::readSave);
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
@@ -333,9 +537,9 @@ public final class GuardPackets {
 
     private static void writeItemRules(RegistryFriendlyByteBuf buf, boolean allowAnyItem, boolean allowUsableItems, String includedItems, String excludedItems, String shieldItems, boolean consumablePriority) {
         buf.writeBoolean(allowAnyItem); buf.writeBoolean(allowUsableItems);
-        buf.writeUtf(includedItems, 1024);
-        buf.writeUtf(excludedItems, 1024);
-        buf.writeUtf(shieldItems, 1024); buf.writeBoolean(consumablePriority);
+        buf.writeUtf(includedItems, GuardItemRules.MAX_LENGTH);
+        buf.writeUtf(excludedItems, GuardItemRules.MAX_LENGTH);
+        buf.writeUtf(shieldItems, GuardItemRules.MAX_LENGTH); buf.writeBoolean(consumablePriority);
     }
 
     private static void writeSources(RegistryFriendlyByteBuf buf, boolean fallParry, boolean fallPerfectParry, boolean fallLookDown, boolean fallBreakBlocks, int fallBlastStrength, int fallLaunchPower, boolean parryExplosions, boolean perfectExplosionsOnly, boolean blockExplosions, boolean parryProjectiles, boolean blockProjectiles, boolean defenderKnockback, int knockbackStrength, int guardMovementPercent, int blockDeflectChance) {
@@ -362,19 +566,21 @@ public final class GuardPackets {
         int knockbackPower = buf.readVarInt();
         int movementPercent = buf.readVarInt(), deflectChance = buf.readVarInt();
         boolean anyItem = buf.readBoolean(), usable = buf.readBoolean();
-        String included = buf.readUtf(1024), excluded = buf.readUtf(1024), shields = buf.readUtf(1024);
+        String included = buf.readUtf(GuardItemRules.MAX_LENGTH), excluded = buf.readUtf(GuardItemRules.MAX_LENGTH), shields = buf.readUtf(GuardItemRules.MAX_LENGTH);
         boolean consumablePriority = buf.readBoolean();
-        return new Settings(parry, block, parryDrowningFire, parryStarvation, parryGenericKill, perfect, window, recharge, angle, reduction, followUp, parryReturn, perfectReturn, parryWear, perfectWear, blockWear, sounds, particles, masterVolume, perfectVolume, parryVolume, blockVolume, fall, fallPerfectParry, fallLookDown, breakBlocks, blast, launch, explosion, perfectOnly, explosionBlock, projectile, projectileBlock, knockback, knockbackPower, movementPercent, deflectChance, anyItem, usable, included, excluded, shields, consumablePriority, hasOperatorFlag && buf.readBoolean());
+        return new Settings(parry, block, parryDrowningFire, parryStarvation, parryGenericKill, perfect, window, recharge, angle, reduction, followUp, parryReturn, perfectReturn, parryWear, perfectWear, blockWear, sounds, particles, masterVolume, perfectVolume, parryVolume, blockVolume, fall, fallPerfectParry, fallLookDown, breakBlocks, blast, launch, explosion, perfectOnly, explosionBlock, projectile, projectileBlock, knockback, knockbackPower, movementPercent, deflectChance, anyItem, usable, included, excluded, shields, consumablePriority, hasOperatorFlag && buf.readBoolean(), buf.readBoolean(), buf.readVarInt());
     }
 
     private static Save readSave(RegistryFriendlyByteBuf buf) {
         Settings data = readSettings(buf, false);
-        return new Save(data.parry, data.block, data.parryDrowningFire, data.parryStarvation, data.parryGenericKill, data.perfect, data.window, data.recharge, data.angle, data.reductionPercent, data.followUp, data.parryReturnPercent, data.perfectReturnPercent, data.parryWear, data.perfectWear, data.blockWear, data.hitSounds, data.hitParticles, data.masterVolume, data.perfectVolume, data.parryVolume, data.blockVolume, data.fallParry, data.fallPerfectParry, data.fallLookDown, data.fallBreakBlocks, data.fallBlastStrength, data.fallLaunchPower, data.parryExplosions, data.perfectExplosionsOnly, data.blockExplosions, data.parryProjectiles, data.blockProjectiles, data.defenderKnockback, data.knockbackStrength, data.guardMovementPercent, data.blockDeflectChance, data.allowAnyItem, data.allowUsableItems, data.includedItems, data.excludedItems, data.shieldItems, data.consumablePriority);
+        return new Save(data.parry, data.block, data.parryDrowningFire, data.parryStarvation, data.parryGenericKill, data.perfect, data.window, data.recharge, data.angle, data.reductionPercent, data.followUp, data.parryReturnPercent, data.perfectReturnPercent, data.parryWear, data.perfectWear, data.blockWear, data.hitSounds, data.hitParticles, data.masterVolume, data.perfectVolume, data.parryVolume, data.blockVolume, data.fallParry, data.fallPerfectParry, data.fallLookDown, data.fallBreakBlocks, data.fallBlastStrength, data.fallLaunchPower, data.parryExplosions, data.perfectExplosionsOnly, data.blockExplosions, data.parryProjectiles, data.blockProjectiles, data.defenderKnockback, data.knockbackStrength, data.guardMovementPercent, data.blockDeflectChance, data.allowAnyItem, data.allowUsableItems, data.includedItems, data.excludedItems, data.shieldItems, data.consumablePriority, data.parryHealing, data.parryHealingHearts);
     }
 
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("47");
+        PayloadRegistrar registrar = event.registrar("67");
+        registrar.playToServer(SetPalette.TYPE, SetPalette.CODEC, GuardPackets::receivePalette);
+        registrar.playToClient(PlayerPalette.TYPE, PlayerPalette.CODEC, (data, context) -> GuardClient.playerPalette(data));
         registrar.playToServer(FeintEnded.TYPE, FeintEnded.CODEC, (data, context) -> {
             if (context.player() instanceof ServerPlayer player) GuardState.feinted(player);
         });
@@ -403,11 +609,13 @@ public final class GuardPackets {
         });
         registrar.playToServer(RequestClientPolicy.TYPE, RequestClientPolicy.CODEC, (data, context) -> {
             if (context.player() instanceof ServerPlayer player)
-                PacketDistributor.sendToPlayer(player, clientPolicy());
+                sendConfigData(player,clientPolicy());
         });
         registrar.playToClient(MobSettings.TYPE, MobSettings.CODEC, (data, context) -> GuardClient.mobSettings(data));
         registrar.playToClient(GuardPose.TYPE, GuardPose.CODEC, (data, context) -> dev.zeli.mallardguard.client.GuardThirdPerson.pose(data));
         registrar.playToServer(SaveConfig.TYPE, SaveConfig.CODEC, GuardPackets::saveConfig);
+        registrar.playToServer(SaveChunk.TYPE, SaveChunk.CODEC, GuardPackets::saveChunk);
+        registrar.playToClient(SnapshotChunk.TYPE,SnapshotChunk.CODEC,GuardPackets::receiveSnapshot);
         registrar.playToClient(SaveResult.TYPE, SaveResult.CODEC, (data, context) -> GuardClient.configSaveResult(data));
         registrar.playToClient(ClientPolicy.TYPE, ClientPolicy.CODEC, (data, context) -> GuardClient.clientPolicy(data));
         registrar.playToClient(Status.TYPE, Status.CODEC, (data, context) -> GuardClient.status(data));
@@ -427,17 +635,14 @@ public final class GuardPackets {
             PacketDistributor.sendToPlayer(player, new ConfigUpdate(String.join("\n", GuardConfig.pendingServerChanges())));
             return;
         }
-        PacketDistributor.sendToPlayer(player, clientPolicy());
-        PacketDistributor.sendToPlayer(player, GuardConfig.mobSnapshot(false));
-        PacketDistributor.sendToPlayer(player, GuardConfig.snapshot(player.hasPermissions(2)));
-        PacketDistributor.sendToPlayer(player, GuardConfig.shieldSnapshot());
-        PacketDistributor.sendToPlayer(player, GuardDamageRules.state(player));
+        sendSnapshot(player,new ConfigSnapshot(GuardConfig.snapshot(player.hasPermissions(2)),GuardConfig.mobSnapshot(false),GuardConfig.shieldSnapshot(),GuardDamageRules.state(player),clientPolicy()));
     }
 
     public static ClientPolicy clientPolicy() {
         int[] saved = GuardClientPreset.parse(GuardConfig.CLIENT_PRESET.get());
         int[] effective = GuardClientPreset.readEnforceTemplate(saved == null ? GuardClientPreset.DEFAULTS : saved);
         GuardRetaliation.enforcedFrames(effective[3]);
+        enforcePalettes(GuardConfig.ENFORCE_CLIENT.get() && (GuardConfig.CLIENT_EXEMPT_MASK.get() & GuardClientPreset.PARTICLES) == 0, effective);
         return new ClientPolicy(GuardConfig.ENFORCE_CLIENT.get(), GuardConfig.CLIENT_EXEMPT_MASK.get() & GuardClientPreset.ALL_CATEGORIES, GuardClientPreset.encode(effective),GuardPoseLibrary.enforcedAnimations());
     }
 
@@ -459,11 +664,11 @@ public final class GuardPackets {
         GuardConfig.ENFORCE_CLIENT.set(data.enabled());
         GuardConfig.CLIENT_EXEMPT_MASK.set(data.dontEnforceMask());
         GuardConfig.CLIENT_PRESET.set(data.defaults());
-        GuardConfig.SERVER_SPEC.save();
-        GuardConfig.clearConfigBackups();
-        ClientPolicy policy = clientPolicy();
-        for (ServerPlayer connected : player.serverLevel().getServer().getPlayerList().getPlayers())
-            PacketDistributor.sendToPlayer(connected, policy);
+        GuardConfig.persistServer();
+        GuardConfig.afterServerSave(()->{
+            ClientPolicy policy=clientPolicy();
+            for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())sendConfigData(connected,policy);
+        });
         return true;
     }
 
@@ -477,6 +682,7 @@ public final class GuardPackets {
             || !GuardSettingRanges.accepts(GuardConfig.RECHARGE_TICKS, data.recharge()) || !GuardSettingRanges.accepts(GuardConfig.FACING_ANGLE, data.angle())
             || !GuardSettingRanges.accepts(GuardConfig.BLOCK_REDUCTION, data.reductionPercent() / 100.0D)
             || !GuardSettingRanges.accepts(GuardConfig.FOLLOW_UP_TICKS, data.followUp())
+            || !GuardSettingRanges.accepts(GuardConfig.PARRY_HEALING_HEARTS, data.parryHealingHearts())
             || !GuardSettingRanges.accepts(GuardConfig.PARRY_RETALIATION, data.parryReturnPercent() / 100.0D)
             || !GuardSettingRanges.accepts(GuardConfig.PERFECT_RETALIATION, data.perfectReturnPercent() / 100.0D)
             || !GuardSettingRanges.accepts(GuardConfig.PARRY_WEAR, data.parryWear())
@@ -495,15 +701,15 @@ public final class GuardPackets {
             player.sendSystemMessage(Component.literal("Mallard Guard: Server settings were rejected. Check the values and item IDs."));
             return false;
         }
-        GuardConfig.apply(new Settings(data.parry(), data.block(), data.parryDrowningFire(), data.parryStarvation(), data.parryGenericKill(), data.perfect(), data.window(), data.recharge(), data.angle(), data.reductionPercent(), data.followUp(), data.parryReturnPercent(), data.perfectReturnPercent(), data.parryWear(), data.perfectWear(), data.blockWear(), data.hitSounds(), data.hitParticles(), data.masterVolume(), data.perfectVolume(), data.parryVolume(), data.blockVolume(), data.fallParry(), data.fallPerfectParry(), data.fallLookDown(), data.fallBreakBlocks(), data.fallBlastStrength(), data.fallLaunchPower(), data.parryExplosions(), data.perfectExplosionsOnly(), data.blockExplosions(), data.parryProjectiles(), data.blockProjectiles(), data.defenderKnockback(), data.knockbackStrength(), data.guardMovementPercent(), data.blockDeflectChance(), data.allowAnyItem(), data.allowUsableItems(), data.includedItems(), data.excludedItems(), data.shieldItems(), data.consumablePriority(), true));
-        broadcastEligibility(player.serverLevel().getServer());
+        GuardConfig.apply(new Settings(data.parry(), data.block(), data.parryDrowningFire(), data.parryStarvation(), data.parryGenericKill(), data.perfect(), data.window(), data.recharge(), data.angle(), data.reductionPercent(), data.followUp(), data.parryReturnPercent(), data.perfectReturnPercent(), data.parryWear(), data.perfectWear(), data.blockWear(), data.hitSounds(), data.hitParticles(), data.masterVolume(), data.perfectVolume(), data.parryVolume(), data.blockVolume(), data.fallParry(), data.fallPerfectParry(), data.fallLookDown(), data.fallBreakBlocks(), data.fallBlastStrength(), data.fallLaunchPower(), data.parryExplosions(), data.perfectExplosionsOnly(), data.blockExplosions(), data.parryProjectiles(), data.blockProjectiles(), data.defenderKnockback(), data.knockbackStrength(), data.guardMovementPercent(), data.blockDeflectChance(), data.allowAnyItem(), data.allowUsableItems(), data.includedItems(), data.excludedItems(), data.shieldItems(), data.consumablePriority(), true, data.parryHealing(), data.parryHealingHearts()));
+        GuardConfig.afterServerSave(()->broadcastEligibility(player.serverLevel().getServer()));
         return true;
     }
 
     public static void broadcastEligibility(net.minecraft.server.MinecraftServer server) {
         Settings operator = GuardConfig.snapshot(true), visitor = GuardConfig.snapshot(false);
         for (ServerPlayer connected : server.getPlayerList().getPlayers())
-            PacketDistributor.sendToPlayer(connected, connected.hasPermissions(2) ? operator : visitor);
+            sendConfigData(connected,connected.hasPermissions(2)?operator:visitor);
     }
 
     private static boolean saveDamageRules(SaveDamageRules data, IPayloadContext context) {
@@ -518,8 +724,7 @@ public final class GuardPackets {
             return false;
         }
         GuardConfig.DAMAGE_RULES.set(data.rules());
-        GuardConfig.SERVER_SPEC.save();
-        GuardConfig.clearConfigBackups();
+        GuardConfig.persistServer();
         return true;
     }
 
@@ -528,49 +733,17 @@ public final class GuardPackets {
     private static boolean saveMobs(SaveMobs packet, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player) || !player.hasPermissions(2)) return false;
         MobSettings data = packet.settings();
-        if (!GuardSettingRanges.accepts(GuardConfig.MOB_DIFFICULTY, data.difficulty())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_PARRY_COLOR, data.parryColor())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_PERFECT_COLOR, data.perfectColor())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_HITS_TO_GUARD, data.hitsBeforeGuard())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_PERFECT_TICKS, data.perfectTicks())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_PARRY_TICKS, data.parryTicks())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_COUNTER_TICKS, data.counterTicks())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_APPROACH_CHANCE, data.approachChance())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_TACTICAL_CHANCE, data.tacticalChance())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_TACTICAL_SECONDS, data.tacticalSeconds())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_TACTICAL_COOLDOWN, data.tacticalCooldownTicks())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_MOVEMENT, data.movement())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_APPROACH_DISTANCE, data.approachDistance())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_APPROACH_SECONDS, data.approachSeconds())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_RUSH_CHANCE, data.rushChance())
-            || !GuardSettingRanges.accepts(GuardConfig.MOB_GEAR_CHANCE, data.gearChance())
-            || !GuardItemRules.valid(data.blacklist()) || data.blacklist().contains("#")
-            || !GuardItemRules.valid(data.humanoidIds()) || data.humanoidIds().contains("#")) return false;
-        GuardConfig.MOB_BLACKLIST.set(data.blacklist());
-        GuardConfig.MOB_GUARD.set(data.enabled());
-        GuardConfig.MOB_DIFFICULTY.set(data.difficulty());
-        GuardConfig.MOB_BLOCKING.set(data.blocking());
-        GuardConfig.MOB_RETALIATION.set(data.retaliation());
-        GuardConfig.MOB_PARRY_COLOR.set(data.parryColor());
-        GuardConfig.MOB_PERFECT_COLOR.set(data.perfectColor());
-        GuardConfig.MOB_HITS_TO_GUARD.set(data.hitsBeforeGuard());
-        GuardConfig.MOB_PERFECT_TICKS.set(data.perfectTicks());
-        GuardConfig.MOB_PARRY_TICKS.set(data.parryTicks());
-        GuardConfig.MOB_COUNTER_TICKS.set(data.counterTicks());
-        GuardConfig.MOB_APPROACH_CHANCE.set(data.approachChance());
-        GuardConfig.MOB_TACTICAL_CHANCE.set(data.tacticalChance());
-        GuardConfig.MOB_TACTICAL_SECONDS.set(data.tacticalSeconds());
-        GuardConfig.MOB_TACTICAL_COOLDOWN.set(data.tacticalCooldownTicks());
-        GuardConfig.MOB_HUMANOID_IDS.set(data.humanoidIds());
-        GuardConfig.MOB_MOVEMENT.set(data.movement());
-        GuardConfig.MOB_APPROACH_DISTANCE.set(data.approachDistance());
-        GuardConfig.MOB_APPROACH_SECONDS.set(data.approachSeconds());
-        GuardConfig.MOB_RUSH_CHANCE.set(data.rushChance());
-        GuardConfig.MOB_GEAR_CHANCE.set(data.gearChance());
-        GuardConfig.SERVER_SPEC.save();
-        GuardConfig.clearConfigBackups();
-        for (ServerPlayer connected : player.serverLevel().getServer().getPlayerList().getPlayers())
-            PacketDistributor.sendToPlayer(connected, data);
+        if (!GuardSettingRanges.accepts(GuardConfig.MOB_DIFFICULTY,data.difficulty())
+            ||!GuardSettingRanges.accepts(GuardConfig.MOB_GEAR_CHANCE,data.gearChance())
+            ||!GuardItemRules.validEntityIds(data.whitelist())||!GuardItemRules.valid(data.gearWhitelist())||!GuardItemRules.valid(data.gearBlacklist())
+            ||!GuardSettingRanges.accepts(GuardConfig.MOB_TRACER_START,data.tracerStartColor())
+            ||!GuardSettingRanges.accepts(GuardConfig.MOB_TRACER_MIDDLE,data.tracerMiddleColor())
+            ||!GuardSettingRanges.accepts(GuardConfig.MOB_TRACER_END,data.tracerEndColor()))return false;
+        GuardConfig.MOB_GUARD.set(data.enabled());GuardConfig.MOB_DIFFICULTY.set(data.difficulty());GuardConfig.MOB_WHITELIST.set(data.whitelist());
+        GuardConfig.MOB_GEAR_CHANCE.set(data.gearChance());GuardConfig.MOB_GEAR_WHITELIST.set(data.gearWhitelist());GuardConfig.MOB_GEAR_BLACKLIST.set(data.gearBlacklist());
+        GuardConfig.MOB_TRACER_START.set(data.tracerStartColor());GuardConfig.MOB_TRACER_MIDDLE.set(data.tracerMiddleColor());GuardConfig.MOB_TRACER_END.set(data.tracerEndColor());
+        GuardConfig.persistServer();
+        GuardConfig.afterServerSave(()->{for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())sendConfigData(connected,data);});
         return true;
     }
 
@@ -589,15 +762,16 @@ public final class GuardPackets {
             || !GuardSettingRanges.accepts(GuardConfig.SHIELD_RETALIATION_PERCENT, data.retaliation()) || !GuardSettingRanges.accepts(GuardConfig.RETALIATION_CAP, data.retaliationCap())
             || !GuardSettingRanges.accepts(GuardConfig.SHIELD_STUN_TICKS, data.stunTicks()) || !GuardSettingRanges.accepts(GuardConfig.SHIELD_PUSHBACK_PERCENT, data.perfectPushback())
             || !GuardSettingRanges.accepts(GuardConfig.SHIELD_PARRY_PUSHBACK_PERCENT, data.regularPushback()) || !GuardSettingRanges.accepts(GuardConfig.TOOL_PUSHBACK_PERCENT, data.weaponPushback())
-            || !GuardItemRules.valid(data.stunnableBosses()) || !GuardItemRules.valid(data.shieldBlacklist())
+            || !GuardItemRules.validEntityRules(data.stunnableBosses()) || !GuardItemRules.valid(data.shieldBlacklist()) || !GuardItemBlockCounts.valid(data.itemBlockCounts())
             || !GuardSettingRanges.accepts(GuardConfig.PARRY_HAND_PRIORITY, data.parryHandPriority()) || !GuardSettingRanges.accepts(GuardConfig.SHIELD_PARRY_PRIORITY, data.shieldParryPriority())) {
             player.sendSystemMessage(Component.literal("Mallard Guard: Invalid shield settings."));
             return false;
         }
         GuardConfig.applyShield(data);
-        ShieldSettings snapshot = GuardConfig.shieldSnapshot();
-        for (ServerPlayer connected : player.serverLevel().getServer().getPlayerList().getPlayers())
-            PacketDistributor.sendToPlayer(connected, snapshot);
+        GuardConfig.afterServerSave(()->{
+            ShieldSettings snapshot=GuardConfig.shieldSnapshot();
+            for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())sendConfigData(connected,snapshot);
+        });
         return true;
     }
 }

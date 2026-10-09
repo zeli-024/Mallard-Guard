@@ -18,7 +18,7 @@ import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.tick.EntityTickEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 
-/** Bounded combat behaviors for supported goal-driven humanoids. State never retains a world or target entity. */
+/** Bounded combat behaviors for explicitly whitelisted humanoids. State never retains a world or target entity. */
 public final class GuardMobState {
     private static final java.util.Set<Mob> GOALS_ADDED = java.util.Collections.newSetFromMap(new WeakHashMap<>());
     private static final Map<Mob, State> STATES = new WeakHashMap<>();
@@ -44,45 +44,47 @@ public final class GuardMobState {
     private static final net.minecraft.tags.TagKey<net.minecraft.world.entity.EntityType<?>> COMMON_BOSSES = net.minecraft.tags.TagKey.create(net.minecraft.core.registries.Registries.ENTITY_TYPE, net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("c", "bosses"));
     private static final net.minecraft.tags.TagKey<net.minecraft.world.entity.EntityType<?>> FORGE_BOSSES = net.minecraft.tags.TagKey.create(net.minecraft.core.registries.Registries.ENTITY_TYPE, net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("forge", "bosses"));
     private static final class State {
-        long rechargeUntil, guardUntil, shieldDisabledUntil, startedAt, nextAttempt, lastPressureHit;
-        long behaviorUntil, nextRaise, tacticalReady, nextDecision, attackReady;
-        int pressureHits, blocks, chains;
+        long rechargeUntil, guardUntil, startedAt, nextAttempt, lastPressureHit;
+        long behaviorUntil, tacticalReady, nextDecision, attackReady;
+        int pressureHits, chains;
         java.util.UUID target;
         Behavior behavior = Behavior.IDLE;
         Movement movement = Movement.STILL;
         float side;
         double radius, approachDistance;
-        boolean guarding, parryStance, approached;
+        boolean guarding, approached;
         InteractionHand hand = InteractionHand.MAIN_HAND;
         ItemStack item = ItemStack.EMPTY;
     }
-    private static String cachedIds = "";
-    private static java.util.Set<net.minecraft.resources.ResourceLocation> extraIds = java.util.Set.of();
-    private static String excludedText = "";
-    private static java.util.Set<String> excluded = java.util.Set.of();
-    private static boolean blacklisted(Mob mob) {
-        String text = GuardConfig.MOB_BLACKLIST.get();
-        if (!text.equals(excludedText)) { excluded = java.util.Set.copyOf(java.util.Arrays.stream(text.split(",")).map(String::trim).filter(v -> !v.isEmpty()).toList()); excludedText = text; }
-        return excluded.contains(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).toString());
-    }
+    private static String cachedIds="";
+    private static java.util.Set<net.minecraft.resources.ResourceLocation> whitelistIds=java.util.Set.of();
     private static boolean supported(Mob mob) {
-        if (blacklisted(mob)) return false;
-        if (mob instanceof net.minecraft.world.entity.boss.wither.WitherBoss
-            || mob instanceof net.minecraft.world.entity.boss.enderdragon.EnderDragon
-            || mob.getType().is(COMMON_BOSSES)
-            || mob.getType().is(FORGE_BOSSES)) return false;
-        String rules = GuardConfig.MOB_HUMANOID_IDS.get();
-        if (!rules.equals(cachedIds)) {
-            var ids = new java.util.HashSet<net.minecraft.resources.ResourceLocation>();
-            for (String value : rules.split(",")) {
-                var id = net.minecraft.resources.ResourceLocation.tryParse(value.trim()); if (id != null) ids.add(id);
+        if(mob instanceof net.minecraft.world.entity.boss.wither.WitherBoss
+            ||mob instanceof net.minecraft.world.entity.boss.enderdragon.EnderDragon
+            ||mob.getType().is(COMMON_BOSSES)||mob.getType().is(FORGE_BOSSES))return false;
+        String rules=GuardConfig.MOB_WHITELIST.get();
+        if(!rules.equals(cachedIds)){
+            var ids=new java.util.HashSet<net.minecraft.resources.ResourceLocation>();
+            for(String value:rules.split(",")){
+                var id=net.minecraft.resources.ResourceLocation.tryParse(value.trim());if(id!=null)ids.add(id);
             }
-            extraIds = java.util.Set.copyOf(ids); cachedIds = rules;
+            whitelistIds=java.util.Set.copyOf(ids);cachedIds=rules;
         }
-        var id = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType());
-        return extraIds.contains(id) || id.getNamespace().equals("minecraft") && (mob instanceof Zombie || mob instanceof AbstractSkeleton || mob instanceof net.minecraft.world.entity.monster.Vindicator);
+        return whitelistIds.contains(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()));
     }
     private GuardMobState() {}
+
+    /** An incidental mob hit must not choose a new opponent for experimental guard AI. */
+    public static boolean combatOpponent(Mob mob, LivingEntity attacker) {
+        return attacker != mob && (!(attacker instanceof Mob) || mob.getTarget() == attacker);
+    }
+
+    public static boolean controlsAi(Mob mob){
+        if(mob.level().isClientSide||!GuardConfig.MOB_GUARD.get()||!GuardConfig.PARRY.get())return false;
+        State state=STATES.get(mob);
+        return state!=null&&state.behavior!=Behavior.IDLE&&mob.isAlive()&&!mob.isNoAi()
+            &&mob.level().getGameTime()<state.behaviorUntil&&!GuardCombatEffects.stunned(mob)&&supported(mob);
+    }
 
     public static InteractionHand defenseHand(Mob mob) { State s = STATES.get(mob); return s == null ? InteractionHand.MAIN_HAND : s.hand; }
 
@@ -97,9 +99,9 @@ public final class GuardMobState {
     }
     private static boolean eligible(ItemStack stack) {
         return !stack.isEmpty() && !stack.is(Items.BOW) && !stack.is(Items.CROSSBOW) && !GuardItemRules.consumable(stack)
-            && !GuardItemRules.matches(stack, GuardConfig.EXCLUDED_ITEMS.get())
+            && !GuardItemRules.excluded(stack)
             && (GuardItemRules.shieldLike(stack) || GuardItemRules.hasAttackDamage(stack)
-                || GuardItemRules.matches(stack, GuardConfig.INCLUDED_ITEMS.get()));
+                || GuardItemRules.included(stack));
     }
 
     public static GuardState.Result react(Mob mob, Vec3 origin, boolean parryAllowed, boolean projectile, boolean explosion) {
@@ -113,38 +115,17 @@ public final class GuardMobState {
         long now = mob.level().getGameTime();
         if (previous == null || !previous.guarding || now >= previous.guardUntil || now < previous.rechargeUntil
             || mob.getItemInHand(previous.hand) != previous.item) return GuardState.Result.NONE;
-        InteractionHand hand = previous.hand;
-        int perfectTicks = GuardConfig.MOB_PERFECT_TICKS.get();
-        int parryTicks = (GuardConfig.MOB_PERFECT_TICKS.get() + GuardConfig.MOB_PARRY_TICKS.get());
-        long elapsed = now - previous.startedAt;
-        boolean canParry = previous.parryStance && parryAllowed && GuardConfig.PARRY.get() && elapsed < parryTicks
-            && (!projectile || GuardConfig.PARRY_PROJECTILES.get()) && (!explosion || GuardConfig.PARRY_EXPLOSIONS.get());
-        boolean perfect = canParry && elapsed < perfectTicks;
-        if (explosion && GuardConfig.PERFECT_EXPLOSIONS_ONLY.get() && !perfect) canParry = false;
-        boolean canBlock = GuardConfig.MOB_BLOCKING.get() && GuardConfig.BLOCK.get()
-            && (!previous.parryStance || elapsed >= parryTicks)
-            && (!projectile || GuardConfig.BLOCK_PROJECTILES.get()) && (!explosion || GuardConfig.BLOCK_EXPLOSIONS.get());
-        GuardState.Result result = canParry ? perfect ? GuardState.Result.PERFECT : GuardState.Result.PARRY
-            : canBlock ? GuardState.Result.BLOCK : GuardState.Result.NONE;
-        if (result == GuardState.Result.NONE) return result;
-        State state = previous;
-        ItemStack item = mob.getItemInHand(hand);
-        if (state.item != item) state.blocks = 0;
-        state.item = item; state.hand = hand;
-        boolean shield = GuardItemRules.shieldLike(item);
-        int recharge = (shield ? GuardConfig.SHIELD_RECHARGE_TICKS : GuardConfig.RECHARGE_TICKS).get();
-        if (result == GuardState.Result.BLOCK) {
-            int max = (shield ? GuardConfig.SHIELD_MAX_BLOCKS : GuardConfig.TOOL_MAX_BLOCKS).get();
-            if (max > 0 && ++state.blocks >= max) {
-                state.rechargeUntil = now + Math.max(recharge, GuardConfig.SHIELD_BREAK_TICKS.get());
-                state.blocks = 0;
-            }
-        } else {
-            state.rechargeUntil = now + (result == GuardState.Result.PERFECT ? 1 : Math.max(1, recharge / 2));
-            state.blocks = 0;
-        }
-        if (result != GuardState.Result.BLOCK) counter(mob, state);
-        else if (state.rechargeUntil > now) finish(mob, state);
+        long elapsed=now-previous.startedAt;
+        boolean perfect=elapsed<GuardConfig.MOB_PERFECT_TICKS.get();
+        if(!parryAllowed||!GuardConfig.PARRY.get()
+            ||projectile&&!GuardConfig.PARRY_PROJECTILES.get()||explosion&&!GuardConfig.PARRY_EXPLOSIONS.get()
+            ||explosion&&GuardConfig.PERFECT_EXPLOSIONS_ONLY.get()&&!perfect)return GuardState.Result.NONE;
+        GuardState.Result result=perfect?GuardState.Result.PERFECT:GuardState.Result.PARRY;
+        boolean shield=GuardItemRules.shieldLike(previous.item);
+        int recharge=(shield?GuardConfig.SHIELD_RECHARGE_TICKS:GuardConfig.RECHARGE_TICKS).get();
+        previous.rechargeUntil=now+(perfect?1:Math.max(1,recharge/2));
+        counter(mob,previous);
+        GuardCombatEffects.healOnParry(mob,result);
         return result;
     }
 
@@ -155,14 +136,6 @@ public final class GuardMobState {
         if (source.getEntity() == null && !source.is(DamageTypeTags.IS_EXPLOSION)) return;
         Vec3 origin = source.getSourcePosition();
         if (origin == null && source.getDirectEntity() != null) origin = source.getDirectEntity().position();
-        State previous = STATES.get(mob);
-        if (previous != null && previous.guarding && (!previous.parryStance || mob.level().getGameTime() - previous.startedAt >= GuardConfig.MOB_PERFECT_TICKS.get() + GuardConfig.MOB_PARRY_TICKS.get()) && GuardItemRules.shieldLike(previous.item)
-            && source.getDirectEntity() instanceof LivingEntity attacker && (attacker.canDisableShield() || attacker.getMainHandItem().canDisableShield(previous.item, mob, attacker))) {
-            previous.shieldDisabledUntil = mob.level().getGameTime() + GuardConfig.SHIELD_BREAK_TICKS.get();
-            previous.rechargeUntil = previous.shieldDisabledUntil;
-            finish(mob, previous);
-            return;
-        }
         ProjectileDefense remembered = source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.Projectile projectile
             ? PROJECTILE_DEFENSES.remove(projectile) : null;
         GuardState.Result result = remembered != null && remembered.tick() == mob.level().getGameTime() && remembered.defender().equals(mob.getUUID()) ? remembered.result()
@@ -170,28 +143,17 @@ public final class GuardMobState {
         if (result == GuardState.Result.NONE) return;
         State state = STATES.get(mob);
         boolean shield = GuardItemRules.shieldLike(state.item);
-        if (shield && result == GuardState.Result.BLOCK && source.getDirectEntity() instanceof LivingEntity attacker
-            && (attacker.canDisableShield() || attacker.getMainHandItem().canDisableShield(state.item, mob, attacker))) {
-            state.shieldDisabledUntil = mob.level().getGameTime() + Math.max(1, GuardConfig.SHIELD_BREAK_TICKS.get());
-            state.rechargeUntil = state.shieldDisabledUntil;
-            finish(mob, state);
-            return;
-        }
-        GuardEffects.onMobHit(mob, source, result, shield);
+        GuardEffects.onMobHit(mob, source, result, shield,event.getAmount());
         wear(mob, state, result, event.getAmount());
-        if (result == GuardState.Result.BLOCK) {
-            if (shield) event.setCanceled(true);
-            else event.setAmount(event.getAmount() * (1.0F - GuardConfig.BLOCK_REDUCTION.get().floatValue()));
-        } else {
-            event.setCanceled(true);
-            GuardCombatEffects.pushDefender(mob, origin, shield);
-            if (source.getEntity() instanceof LivingEntity attacker && attacker != mob) {
-                GuardCombatEffects.pushAttacker(mob, attacker, shield);
-                if (GuardConfig.MOB_RETALIATION.get() && source.getDirectEntity() == attacker) {
-                    float multiplier = shield ? result == GuardState.Result.PERFECT ? GuardConfig.SHIELD_RETALIATION_PERCENT.get() / 100.0F : 0
-                        : (result == GuardState.Result.PERFECT ? GuardConfig.PERFECT_RETALIATION : GuardConfig.PARRY_RETALIATION).get().floatValue();
-                    if (multiplier > 0) MallardGuard.returnDamage(mob, attacker, event.getAmount() * multiplier);
-                }
+        event.setCanceled(true);
+        GuardCombatEffects.pushDefender(mob,origin,shield);
+        if(source.getEntity() instanceof LivingEntity attacker&&combatOpponent(mob,attacker)){
+            GuardCombatEffects.pushAttacker(mob,attacker,shield);
+            boolean retaliate=(result==GuardState.Result.PERFECT?GuardConfig.MOB_PERFECT_RETALIATION:GuardConfig.MOB_REGULAR_RETALIATION).get();
+            if(retaliate&&source.getDirectEntity()==attacker){
+                float multiplier=shield?result==GuardState.Result.PERFECT?GuardConfig.SHIELD_RETALIATION_PERCENT.get()/100F:0
+                    :(result==GuardState.Result.PERFECT?GuardConfig.PERFECT_RETALIATION:GuardConfig.PARRY_RETALIATION).get().floatValue();
+                if(multiplier>0)MallardGuard.returnDamage(mob,attacker,event.getAmount()*multiplier);
             }
         }
     }
@@ -202,11 +164,8 @@ public final class GuardMobState {
     }
     private static void wear(Mob mob, State state, GuardState.Result result, float amount) {
         if (!state.item.isDamageableItem()) return;
-        boolean shield = GuardItemRules.shieldLike(state.item);
-        int percent = (result == GuardState.Result.PERFECT ? GuardConfig.PERFECT_WEAR
-            : result == GuardState.Result.PARRY ? GuardConfig.PARRY_WEAR : GuardConfig.BLOCK_WEAR).get();
-        int wear = result == GuardState.Result.BLOCK && shield ? amount >= 3 ? 1 + (int) Math.floor(amount) : 0
-            : percent == 0 ? 0 : Math.max(1, (int) Math.ceil(state.item.getMaxDamage() * percent / 1000.0D));
+        int percent=(result==GuardState.Result.PERFECT?GuardConfig.PERFECT_WEAR:GuardConfig.PARRY_WEAR).get();
+        int wear=percent==0?0:Math.max(1,(int)Math.ceil(state.item.getMaxDamage()*percent/1000D));
         if (wear > 0) state.item.hurtAndBreak(wear, mob, state.hand == InteractionHand.OFF_HAND ? EquipmentSlot.OFFHAND : EquipmentSlot.MAINHAND);
     }
 
@@ -227,41 +186,29 @@ public final class GuardMobState {
         if (state.behavior != Behavior.IDLE) state.nextAttempt = Math.max(state.nextAttempt, mob.level().getGameTime()
             + (GuardItemRules.shieldLike(state.item) ? GuardConfig.SHIELD_RECHARGE_TICKS : GuardConfig.RECHARGE_TICKS).get());
         pose(mob, state, false); state.behavior = Behavior.IDLE;
-        state.behaviorUntil = state.nextRaise = 0;
+        state.behaviorUntil = state.guardUntil = 0;
         stopMovement(mob); movement(mob, false);
     }
     private static boolean chooseHand(Mob mob, State state) {
         boolean main = eligible(mob.getMainHandItem()), off = eligible(mob.getOffhandItem());
-        if (mob.level().getGameTime() < state.shieldDisabledUntil) {
-            main &= !GuardItemRules.shieldLike(mob.getMainHandItem()); off &= !GuardItemRules.shieldLike(mob.getOffhandItem());
-        }
         if (!main && !off) return false;
         state.hand = off && (GuardItemRules.shieldLike(mob.getOffhandItem()) || !main) ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-        ItemStack item = mob.getItemInHand(state.hand); if (state.item != item) state.blocks = 0;
+        ItemStack item = mob.getItemInHand(state.hand);
         state.item = item; return true;
     }
-    private static void raise(Mob mob, State state) {
-        long now = mob.level().getGameTime(); state.startedAt = now;
-        state.parryStance = GuardConfig.PARRY.get();
-        state.guardUntil = now + GuardConfig.MOB_PERFECT_TICKS.get() + GuardConfig.MOB_PARRY_TICKS.get()
-            + (GuardConfig.MOB_BLOCKING.get() && GuardConfig.BLOCK.get() ? 20 : 0);
-        pose(mob, state, true);
-    }
     private static boolean begin(Mob mob, State state, LivingEntity target, Behavior behavior) {
-        if (target == null || !target.isAlive() || !chooseHand(mob, state) || mob.isPassenger()) return false;
+        if (!GuardConfig.PARRY.get() || target == null || !target.isAlive() || !chooseHand(mob, state) || mob.isPassenger()) return false;
         long now = mob.level().getGameTime();
         state.target = target.getUUID(); state.behavior = behavior; state.pressureHits = 0;
         state.side = mob.getRandom().nextBoolean() ? 0.65F : -0.65F;
         state.radius = Math.max(1.2D, Math.hypot(target.getX() - mob.getX(), target.getZ() - mob.getZ()));
         state.movement = behavior == Behavior.TACTICAL
             ? MOVEMENTS[mob.getRandom().nextInt(MOVEMENTS.length)] : Movement.STILL;
-        raise(mob, state);
-        if (behavior == Behavior.TACTICAL) {
-            int maximum = GuardConfig.MOB_TACTICAL_SECONDS.get();
-            state.behaviorUntil = now + (1 + mob.getRandom().nextInt(maximum)) * 20;
-            state.tacticalReady = state.behaviorUntil + GuardConfig.MOB_TACTICAL_COOLDOWN.get();
-        } else if (behavior == Behavior.APPROACH) state.behaviorUntil = now + (1 + mob.getRandom().nextInt(GuardConfig.MOB_APPROACH_SECONDS.get())) * 20;
-        else state.behaviorUntil = state.guardUntil;
+        int maximum=(behavior==Behavior.TACTICAL?GuardConfig.MOB_TACTICAL_SECONDS:GuardConfig.MOB_APPROACH_SECONDS).get();
+        state.startedAt=now;
+        state.guardUntil=state.behaviorUntil=now+(1+mob.getRandom().nextInt(maximum))*20;
+        pose(mob,state,true);
+        if(behavior==Behavior.TACTICAL)state.tacticalReady=state.behaviorUntil+GuardConfig.MOB_TACTICAL_COOLDOWN.get();
         // Stop conflicting interruptible goals immediately; keep their registrations intact.
         for (var goal : mob.goalSelector.getAvailableGoals()) {
             if (!goal.isRunning() || !goal.isInterruptable() || goal.getGoal() instanceof GuardBehaviorGoal) continue;
@@ -274,14 +221,18 @@ public final class GuardMobState {
         movement(mob, true); stopMovement(mob);
         return true;
     }
+    private static boolean decision(Mob mob,double chance){
+        double effective=Math.max(0,Math.min(100,chance))*GuardConfig.MOB_DIFFICULTY.get()/100D;
+        return effective>0 && mob.getRandom().nextDouble()*100<effective;
+    }
     private static void counter(Mob mob, State state) {
         LivingEntity target = target(mob, state); long now = mob.level().getGameTime();
         finish(mob, state);
         if (target == null) return;
         state.nextAttempt = now + (GuardItemRules.shieldLike(state.item) ? GuardConfig.SHIELD_RECHARGE_TICKS : GuardConfig.RECHARGE_TICKS).get();
         // At most one immediate follow-up stance before committing to a counter.
-        boolean rush = mob.getRandom().nextInt(100) < GuardConfig.MOB_RUSH_CHANCE.get();
-        if (!rush && state.chains == 0 && mob.getRandom().nextBoolean() && begin(mob, state, target, Behavior.PRESSURE)) {
+        boolean rush = decision(mob,GuardConfig.MOB_RUSH_CHANCE.get());
+        if (!rush && state.chains == 0 && decision(mob,50) && begin(mob, state, target, Behavior.PRESSURE)) {
             state.chains = 1; state.rechargeUntil = now; return;
         }
         state.chains = 0;
@@ -293,7 +244,7 @@ public final class GuardMobState {
         if (!(event.getEntity() instanceof Mob mob) || mob.level().isClientSide) return;
         State state = STATES.get(mob); long now = mob.level().getGameTime();
         if (!GuardConfig.MOB_GUARD.get() || !mob.isAlive() || mob.isNoAi() || GuardCombatEffects.stunned(mob) || !supported(mob) || ranged(mob)
-            || !GuardConfig.PARRY.get() && (!GuardConfig.MOB_BLOCKING.get() || !GuardConfig.BLOCK.get())) {
+            || !GuardConfig.PARRY.get()) {
             if (state != null) { if (state.behavior != Behavior.IDLE) finish(mob, state); STATES.remove(mob); } return;
         }
         if (!eligible(mob.getMainHandItem()) && !eligible(mob.getOffhandItem())) {
@@ -308,30 +259,25 @@ public final class GuardMobState {
         if (state == null) { state = new State(); state.approachDistance = 1 + mob.getRandom().nextDouble() * (GuardConfig.MOB_APPROACH_DISTANCE.get() - 1); state.target = target.getUUID(); STATES.put(mob, state); }
         if (state.behavior != Behavior.IDLE) {
             if (now >= state.behaviorUntil || mob.getItemInHand(state.hand) != state.item) { finish(mob, state); state.chains = 0; return; }
-            if (state.behavior != Behavior.COUNTER && now >= state.guardUntil && state.guarding) {
-                if (state.behavior == Behavior.TACTICAL || state.behavior == Behavior.APPROACH) { pose(mob, state, false); state.nextRaise = now + 5 + mob.getRandom().nextInt(6); }
-                else { finish(mob, state); return; }
-            }
-            if ((state.behavior == Behavior.TACTICAL || state.behavior == Behavior.APPROACH) && !state.guarding && now >= state.nextRaise) raise(mob, state);
             return;
         }
         if (!target.getUUID().equals(state.target)) { state.target = target.getUUID(); state.approached = false; state.approachDistance = 1 + mob.getRandom().nextDouble() * (GuardConfig.MOB_APPROACH_DISTANCE.get() - 1); state.pressureHits = 0; }
         if ((mob.tickCount + mob.getId()) % 5 != 0 || now < state.nextAttempt || now < state.rechargeUntil) return;
-        double difficulty = GuardConfig.MOB_DIFFICULTY.get() / 100.0D;
         if (!state.approached && mob.distanceToSqr(target) <= Math.max(1, state.approachDistance * state.approachDistance)) {
             state.approached = true;
-            if (mob.getRandom().nextDouble() * 100 < GuardConfig.MOB_APPROACH_CHANCE.get() * difficulty && begin(mob, state, target, Behavior.APPROACH)) return;
+            if (decision(mob,GuardConfig.MOB_APPROACH_CHANCE.get()) && begin(mob, state, target, Behavior.APPROACH)) return;
         }
         if (now < state.nextDecision) return;
         state.nextDecision = now + 40 + mob.getRandom().nextInt(41);
-        if (now >= state.tacticalReady && mob.getRandom().nextDouble() * 100 < GuardConfig.MOB_TACTICAL_CHANCE.get() * difficulty)
+        if (now >= state.tacticalReady && decision(mob,GuardConfig.MOB_TACTICAL_CHANCE.get()))
             begin(mob, state, target, Behavior.TACTICAL);
     }
     public static void damaged(net.neoforged.neoforge.event.entity.living.LivingDamageEvent.Post event) {
         if (!(event.getEntity() instanceof Mob mob) || mob.level().isClientSide || !GuardConfig.MOB_GUARD.get() || !supported(mob) || ranged(mob)
             || !mob.isAlive() || mob.isNoAi() || GuardCombatEffects.stunned(mob) || event.getNewDamage() <= 0
-            || !GuardConfig.PARRY.get() && (!GuardConfig.MOB_BLOCKING.get() || !GuardConfig.BLOCK.get())
-            || !(event.getSource().getEntity() instanceof LivingEntity attacker)) return;
+            || !GuardConfig.PARRY.get() || MallardGuard.returningDamage()
+            || !(event.getSource().getEntity() instanceof LivingEntity attacker)
+            || !combatOpponent(mob,attacker)) return;
         State state = STATES.computeIfAbsent(mob, ignored -> { State fresh = new State(); fresh.approachDistance = 1 + mob.getRandom().nextDouble() * (GuardConfig.MOB_APPROACH_DISTANCE.get() - 1); return fresh; });
         if (state.behavior != Behavior.IDLE || !chooseHand(mob, state)) return;
         long now = mob.level().getGameTime();
@@ -339,8 +285,8 @@ public final class GuardMobState {
         state.lastPressureHit = now; state.target = attacker.getUUID(); state.pressureHits = Math.min(100, state.pressureHits + 1);
         int threshold = GuardConfig.MOB_HITS_TO_GUARD.get();
         if (state.pressureHits < threshold || now < state.rechargeUntil || now < state.nextAttempt) return;
-        double chance = Math.min(100, 40.0D * state.pressureHits / threshold) * GuardConfig.MOB_DIFFICULTY.get() / 100.0D;
-        if (mob.getRandom().nextDouble() * 100 < chance) { state.chains = 0; begin(mob, state, attacker, Behavior.PRESSURE); }
+        double chance = Math.min(100, 40.0D * state.pressureHits / threshold);
+        if (decision(mob,chance)) { state.chains = 0; begin(mob, state, attacker, Behavior.PRESSURE); }
     }
     public static void leave(EntityLeaveLevelEvent event) {
         if (!event.getLevel().isClientSide && event.getEntity() instanceof Mob mob) {
@@ -349,7 +295,7 @@ public final class GuardMobState {
     }
     public static void stopping(net.neoforged.neoforge.event.server.ServerStoppingEvent event) {
         for (var entry : STATES.entrySet()) if (entry.getValue().behavior != Behavior.IDLE) finish(entry.getKey(), entry.getValue());
-        STATES.clear(); GOALS_ADDED.clear(); PROJECTILE_DEFENSES.clear(); extraIds = java.util.Set.of(); cachedIds = "";
+        STATES.clear(); GOALS_ADDED.clear(); PROJECTILE_DEFENSES.clear(); clearGear(); whitelistIds = java.util.Set.of(); cachedIds = "";
     }
     public static void join(EntityJoinLevelEvent event) {
         if (!event.getLevel().isClientSide && GuardConfig.MOB_GUARD.get() && event.getEntity() instanceof Mob mob && supported(mob) && GOALS_ADDED.add(mob))
@@ -395,30 +341,78 @@ public final class GuardMobState {
         }
     }
 
-    public static void equip(EntityJoinLevelEvent event) {
-        if (event.getLevel().isClientSide || event.loadedFromDisk() || !GuardConfig.MOB_GUARD.get()
-            || !(event.getEntity() instanceof Mob mob) || blacklisted(mob) || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).getNamespace().equals("minecraft")
-            || !(mob instanceof Zombie || mob instanceof AbstractSkeleton || mob instanceof net.minecraft.world.entity.monster.Vindicator || mob instanceof net.minecraft.world.entity.monster.Pillager)
-            || mob.getPersistentData().getBoolean(EQUIPMENT_ROLLED)) return;
-        mob.getPersistentData().putBoolean(EQUIPMENT_ROLLED, true);
-        if (mob.getRandom().nextInt(100) >= GuardConfig.MOB_GEAR_CHANCE.get()) return;
-        if (mob instanceof Zombie || mob instanceof AbstractSkeleton) {
-            if (mob.getItemBySlot(EquipmentSlot.CHEST).isEmpty()) { mob.setItemSlot(EquipmentSlot.CHEST, new ItemStack(Items.IRON_CHESTPLATE)); mob.setDropChance(EquipmentSlot.CHEST, 0); }
-            if (mob.getItemBySlot(EquipmentSlot.HEAD).isEmpty()) { mob.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET)); mob.setDropChance(EquipmentSlot.HEAD, 0); }
+    /** Equipment shown by the shared browser and accepted by the spawn gear pools. */
+    public static EquipmentSlot equipmentSlot(net.minecraft.world.item.Item item){
+        if(item instanceof net.minecraft.world.item.ArmorItem armor){
+            EquipmentSlot slot=armor.getType().getSlot();
+            return slot==EquipmentSlot.HEAD||slot==EquipmentSlot.CHEST||slot==EquipmentSlot.LEGS||slot==EquipmentSlot.FEET?slot:null;
         }
-        var held = mob.getMainHandItem();
-        if (!mob.getOffhandItem().isEmpty() || !held.isEmpty() && !held.is(Items.BOW) && !held.is(Items.CROSSBOW) && !held.is(Items.IRON_AXE)) return;
-        if (mob instanceof net.minecraft.world.entity.monster.Pillager) { mob.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(Items.CROSSBOW)); return; }
-        boolean skeleton = mob instanceof AbstractSkeleton;
-        int weapon = mob.getRandom().nextInt(skeleton ? 4 : 3);
-        if (weapon == 3) { mob.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(Items.BOW)); return; }
-        int roll = mob.getRandom().nextInt(100), tier = roll < 60 ? 0 : roll < 90 ? 1 : roll < 95 ? 2 : 3;
-        var item = switch (weapon) {
-            case 0 -> tier == 0 ? Items.STONE_SWORD : tier == 1 ? Items.IRON_SWORD : tier == 2 ? Items.GOLDEN_SWORD : Items.DIAMOND_SWORD;
-            case 1 -> tier == 0 ? Items.STONE_AXE : tier == 1 ? Items.IRON_AXE : tier == 2 ? Items.GOLDEN_AXE : Items.DIAMOND_AXE;
-            default -> tier == 0 ? Items.STONE_PICKAXE : tier == 1 ? Items.IRON_PICKAXE : tier == 2 ? Items.GOLDEN_PICKAXE : Items.DIAMOND_PICKAXE;
-        };
-        mob.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(item));
-        if (mob.getRandom().nextInt(100) < 35) mob.setItemSlot(EquipmentSlot.OFFHAND, new ItemStack(Items.SHIELD));
+        if(item instanceof net.minecraft.world.item.ElytraItem)return EquipmentSlot.CHEST;
+        if(item instanceof net.minecraft.world.item.ShieldItem)return EquipmentSlot.OFFHAND;
+        return item instanceof net.minecraft.world.item.TieredItem||item instanceof net.minecraft.world.item.ProjectileWeaponItem
+            ||GuardItemRules.hasAttackDamage(item.getDefaultInstance())?EquipmentSlot.MAINHAND:null;
+    }
+    private record GearPool(net.minecraft.world.item.Item[] items,int[] ends,int total){
+        net.minecraft.world.item.Item choose(Mob mob){
+            if(total==0)return null;
+            int at=java.util.Arrays.binarySearch(ends,1+mob.getRandom().nextInt(total));
+            return items[at<0?-at-1:at];
+        }
+    }
+    private record GearPools(java.util.Map<EquipmentSlot,GearPool> slots,GearPool melee,GearPool ranged){}
+    private static GearPools cachedGear;
+    private static String cachedGearAllowed="",cachedGearBlocked="";
+    private static synchronized void clearGear(){cachedGear=null;cachedGearAllowed=cachedGearBlocked="";}
+    public static void tagsUpdated(net.neoforged.neoforge.event.TagsUpdatedEvent event){clearGear();}
+    private static GearPool pool(java.util.List<net.minecraft.world.item.Item> items){
+        int[] ends=new int[items.size()];int total=0;
+        for(int i=0;i<items.size();i++){
+            String id=net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(items.get(i)).getPath();
+            int weight=id.startsWith("netherite_")?1:id.startsWith("diamond_")||id.startsWith("golden_")?5:id.startsWith("iron_")?30:60;
+            ends[i]=total+=weight;
+        }
+        return new GearPool(items.toArray(net.minecraft.world.item.Item[]::new),ends,total);
+    }
+    private static synchronized GearPools gearPools(){
+        String allowed=GuardConfig.MOB_GEAR_WHITELIST.get(),blocked=GuardConfig.MOB_GEAR_BLACKLIST.get();
+        if(cachedGear!=null&&allowed.equals(cachedGearAllowed)&&blocked.equals(cachedGearBlocked))return cachedGear;
+        var allow=GuardItemRules.compile(allowed);var deny=GuardItemRules.compile(blocked);
+        var slots=new java.util.EnumMap<EquipmentSlot,java.util.List<net.minecraft.world.item.Item>>(EquipmentSlot.class);
+        var melee=new java.util.ArrayList<net.minecraft.world.item.Item>();var ranged=new java.util.ArrayList<net.minecraft.world.item.Item>();
+        for(var item:net.minecraft.core.registries.BuiltInRegistries.ITEM){
+            EquipmentSlot slot=equipmentSlot(item);if(slot==null)continue;
+            var stack=item.getDefaultInstance();if(!allow.matches(stack)||deny.matches(stack))continue;
+            if(slot==EquipmentSlot.MAINHAND){if(item instanceof net.minecraft.world.item.ProjectileWeaponItem)ranged.add(item);else melee.add(item);}
+            else slots.computeIfAbsent(slot,ignored->new java.util.ArrayList<>()).add(item);
+        }
+        var built=new java.util.EnumMap<EquipmentSlot,GearPool>(EquipmentSlot.class);
+        slots.forEach((slot,items)->built.put(slot,pool(items)));
+        cachedGearAllowed=allowed;cachedGearBlocked=blocked;
+        return cachedGear=new GearPools(java.util.Map.copyOf(built),pool(melee),pool(ranged));
+    }
+    private static void equipEmpty(Mob mob,EquipmentSlot slot,GearPools pools){
+        if(!mob.getItemBySlot(slot).isEmpty())return;
+        GearPool pool=pools.slots().get(slot);var item=pool==null?null:pool.choose(mob);
+        if(item!=null){mob.setItemSlot(slot,new ItemStack(item));mob.setDropChance(slot,0);}
+    }
+    public static void equip(EntityJoinLevelEvent event) {
+        if(event.getLevel().isClientSide||event.loadedFromDisk()||!GuardConfig.MOB_GUARD.get()
+            ||!(event.getEntity() instanceof Mob mob)||!supported(mob)||!net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).getNamespace().equals("minecraft")
+            ||!(mob instanceof Zombie||mob instanceof AbstractSkeleton||mob instanceof net.minecraft.world.entity.monster.Vindicator||mob instanceof net.minecraft.world.entity.monster.Pillager||mob instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin)
+            ||mob.getPersistentData().getBoolean(EQUIPMENT_ROLLED))return;
+        mob.getPersistentData().putBoolean(EQUIPMENT_ROLLED,true);
+        if(mob.getRandom().nextInt(100)>=GuardConfig.MOB_GEAR_CHANCE.get())return;
+        GearPools pools=gearPools();
+        equipEmpty(mob,EquipmentSlot.HEAD,pools);equipEmpty(mob,EquipmentSlot.CHEST,pools);
+        equipEmpty(mob,EquipmentSlot.LEGS,pools);equipEmpty(mob,EquipmentSlot.FEET,pools);
+        ItemStack held=mob.getMainHandItem();
+        // Preserve existing melee gear; a ranged loadout may be rerolled as in the prior implementation.
+        if(held.isEmpty()||held.getItem() instanceof net.minecraft.world.item.ProjectileWeaponItem){
+            boolean ranged=mob instanceof net.minecraft.world.entity.monster.Pillager||mob instanceof AbstractSkeleton&&mob.getRandom().nextInt(3)==0;
+            GearPool pool=ranged?pools.ranged():pools.melee();
+            if(pool.total()==0)pool=ranged?pools.melee():pools.ranged();
+            var item=pool.choose(mob);if(item!=null)mob.setItemSlot(EquipmentSlot.MAINHAND,new ItemStack(item));
+        }
+        if(!ranged(mob)&&mob.getRandom().nextInt(100)<35)equipEmpty(mob,EquipmentSlot.OFFHAND,pools);
     }
 }

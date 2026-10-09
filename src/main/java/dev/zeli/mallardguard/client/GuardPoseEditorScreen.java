@@ -60,8 +60,8 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
                 button("Assign Main-Hand Items",x,top+120,inner,()->Minecraft.getInstance().setScreen(new GuardPoseItemScreen(this,pose.items,pose.handMode,(items,mode)->{pose.items=new ArrayList<>(items);pose.handMode=mode;})),"Choose items or empty hands that trigger this preset. Placement follows the actual guarding hand.").active=parent.editable;
             }
         }else if(group==3){
-            motion("Enter",x,top+52,col,19,2000,"Time to raise this pose, in milliseconds.");
-            motion("Return",x,top+74,col,20,2000,"Total return time, including empty-offhand lowering, in milliseconds.");
+            motion("Enter",x,top+52,col,19,500,"Time to move into guard, in milliseconds.\nDrag: 10 ms; scroll: 1 ms; Shift-scroll: 10 ms.");
+            motion("Return",x,top+74,col,20,500,"Total return time, including empty-offhand lowering, in milliseconds.");
             motion("Ease Strength",x,top+96,col,22,200,"Strength of the selected curve. Range: 0–200%.");
             button("Curve: "+new String[]{"Linear","Ease In","Ease Out","In/Out"}[pose.values[21]],right,top+52,col,()->{pose.values[21]=(pose.values[21]+1)%4;PunchyGuardCompat.previewMotion(pose.values);rebuild();},"Entry and return movement curve.").active=parent.editable;
             button("Hold: "+(pose.maintainHeld?"On":"Off"),right,top+74,col,()->{pose.maintainHeld=!pose.maintainHeld;PunchyGuardCompat.previewMaintain(pose.maintainHeld);rebuild();},"On holds the pose until guard ends. Off plays it once per guard attempt. Default: On.").active=parent.editable;
@@ -70,6 +70,7 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
         button("Copy Preset",x,top+144,third,this::copyPreset,"Copy another preset into this draft.").active=parent.editable;
         button("Preview: "+(previewOn?"On":"Off"),x+third+6,top+144,third,()->{previewOn=!previewOn;if(previewOn){PunchyGuardCompat.previewPose(pose.values,pose.maintainHeld);previewStarted=true;}else{PunchyGuardCompat.clearPreview();previewStarted=false;}rebuild();},"Play this preset's entry and return.");
         visibility=button("Hide UI",x+2*(third+6),top+144,third,this::toggleVisibility,"Fade controls. Click anywhere to show them again.");
+        button("?",left+8,top+180,22,()->GuardUi.choices(this,"Placement Help","PLACEMENT\nChoose main hand, supporting hand or weapon offsets.\nMove changes position; Rotate changes the angle.\n\nASSIGNMENTS\nChoose which held items use this preset.\nWeapon and supporting-hand lists refine their own offsets.\n\nPREVIEW AND SAVE\nPreview plays the draft. Save commits your changes.\nCopy Preset copies values into this draft.",new GuardUi.Choice("Back",()->Minecraft.getInstance().setScreen(this))),"Help with placement, assignments and saving.");
         int action=Math.min(90,(inner-6)/2);
         button("Save",left+panelWidth-8-2*action-6,top+180,action,this::save,"Name and save this preset.").active=parent.editable;
         button("Close",left+panelWidth-8-action,top+180,action,this::onClose,"Close the editor. Unsaved edits require confirmation.");
@@ -78,8 +79,9 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
     private void motion(String label,int x,int y,int w,int field,int maximum,String tip){var slider=addRenderableWidget(new AbstractSliderButton(x,y,w,20,Component.empty(),pose.values[field]/(double)maximum){
         {updateMessage();}
         @Override protected void updateMessage(){setMessage(Component.literal(label+": "+pose.values[field]+(field==22?"%":" ms")));}
-        @Override protected void applyValue(){int next=(int)Math.round(value*maximum);if(next!=pose.values[field]){pose.values[field]=next;PunchyGuardCompat.previewMotion(pose.values);}}
-        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y))return false;value=Math.clamp(value+Math.signum(sy)*(field==22?1.0:10.0)*(hasShiftDown()?10:1)/maximum,0,1);applyValue();updateMessage();return true;}
+        private void set(int next){if(next!=pose.values[field]){pose.values[field]=next;PunchyGuardCompat.previewMotion(pose.values);}value=next/(double)maximum;}
+        @Override protected void applyValue(){int step=GuardUi.dragStep(0,maximum,1);set(Math.clamp((int)Math.round(value*maximum/step)*step,0,maximum));}
+        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y)||sy==0)return false;set(Math.clamp(pose.values[field]+(int)Math.signum(sy)*(hasShiftDown()?10:1),0,maximum));updateMessage();return true;}
         @Override public void renderWidget(GuiGraphics g,int mx,int my,float d){GuardUi.slider(g,this,value,pose.values[field]!=saved.values[field]);}
     });slider.setHeight(18);slider.active=parent.editable;slider.setTooltip(Tooltip.create(Component.literal(tip)));}
 
@@ -91,7 +93,7 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
         beginPreview(g);
         GuardUi.panel(g,left,top,panelWidth,panelHeight,false);
         g.drawString(font,font.plainSubstrByWidth(pose.name,panelWidth-20),left+10,top+10,GuardUi.TEXT);
-        g.drawString(font,changed()?"Unsaved edits":"Saved preset",left+10,top+185,changed()?0xFFE7CD87:GuardUi.MUTED);
+        g.drawString(font,font.plainSubstrByWidth(changed()?"Unsaved edits":"Saved preset",Math.max(1,panelWidth-234)),left+36,top+185,changed()?GuardUi.HIGHLIGHT:GuardUi.MUTED);
         for(var widget:renderables)widget.render(g,x,y,d);
         endPreview(g);
     }

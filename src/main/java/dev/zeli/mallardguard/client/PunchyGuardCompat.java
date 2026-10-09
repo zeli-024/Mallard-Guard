@@ -161,14 +161,20 @@ public final class PunchyGuardCompat {
     private static boolean releasePending, releaseHadHitlag;
     private static long releaseAtNanos;
     public static void guardStatus(int phase){
-        if(phase<1||phase>3)spentGuard=false;
+        boolean entry=phase>=1&&phase<=3&&(guardPhase<1||guardPhase>3);
         guardPhase=phase;
-        // Establish the pose on the confirmed entry event, before an immediate hit result.
-        if(preview==null && phase>=1 && phase<=3 && ownedClip==null && initialize())beforePoseTick(handler);
+        if(phase<1||phase>3)spentGuard=false;
+        if(preview==null && entry && initialize()){
+            // A new guard owns the animation immediately, including during the old hit reaction/return.
+            finishRelease();spentGuard=false;restartPreview=true;
+            beforePoseTick(handler);
+        }
         if(available&&preview==null&&ownedClip!=null&&(phase<1||phase>3))release();
     }
     public static boolean beforeIntentFlush(){
         if(!initialize())return false;
+        // Once guarding ends, a newer native attack may replace our reaction or return.
+        if(preview==null&&(guardPhase<1||guardPhase>3||spentGuard))return false;
         if(ownedClip!=null&&!exiting&&!shouldTakeOver())release();
         return shouldTakeOver();
     }
@@ -344,8 +350,13 @@ public final class PunchyGuardCompat {
             Object clip=preview!=null?(arm==HumanoidArm.RIGHT?previewRight:previewLeft):clips[selected][arm==HumanoidArm.RIGHT?0:1];
             if(ownedClip!=clip||ownedHand!=hand||owner.get()!=player||currentClip.invoke(handler)!=clip||restartPreview){
                 int[] values=preview!=null?preview:poses[selected];
+                if(preview==null){
+                    clearReaction();releasePending=releaseHadHitlag=exiting=automaticReturn=false;releaseAtNanos=0;
+                    clearClip.invoke(handler);
+                }
                 sourceHand.invoke(null,Minecraft.getInstance(),hand);activeArm.invoke(handler,arm);looping.invoke(handler,false);
-                playTransition(clip,values,livePreview&&preview!=null?0.0F:values[19]/1000.0F,arm,otherHandVisible);
+                // Start now, then blend for the configured entry time. Placement previews stay instant.
+                playTransition(clip,values,livePreview?0.0F:values[19]/1000.0F,arm,otherHandVisible);
                 if(dev.zeli.mallardguard.GuardDiagnostics.enabled(dev.zeli.mallardguard.GuardDiagnostics.ANIMATION))dev.zeli.mallardguard.GuardDiagnostics.event(dev.zeli.mallardguard.GuardDiagnostics.ANIMATION,"Punchy pose started: hand="+hand+", preview="+(preview!=null)+", enterMs="+values[19]+", returnMs="+values[20]+", easing="+values[21]+", strength="+values[22]);ownedClip=clip;ownedHand=hand;ownedItem=player.getItemInHand(hand).getItem();ownedSupportItem=support.getItem();owner=new WeakReference<>(player);ownedMaintain=preview!=null?(livePreview||previewMaintain):assignment.maintainHeld;ownedOtherHandVisible=otherHandVisible;restartPreview=false;
             }
         }catch(ReflectiveOperationException|RuntimeException|LinkageError error){fail(error);}
@@ -452,9 +463,13 @@ public final class PunchyGuardCompat {
         if(!available || ownedClip==null || ownedValues==null || ownedHand==null){reactionSkipped("no active guard pose");return;}
         if(player==null || player!=Minecraft.getInstance().player || !player.isAlive()){reactionSkipped("no active player");return;}
         if(player.isUsingItem()){reactionSkipped("native item-use animation has priority");return;}
-        if(exiting){reactionSkipped("guard pose is already releasing");return;}
         if(!releaseAssignmentMatches(player)){reactionSkipped("held item or pose assignment changed");return;}
         try {
+            if(exiting && currentClip.invoke(handler)==ownedClip){
+                clearClip.invoke(handler);exiting=automaticReturn=false;lowerEmptyOffhand=false;
+                HumanoidArm arm=ownedHand==InteractionHand.MAIN_HAND?player.getMainArm():player.getMainArm().getOpposite();
+                playTransition(ownedClip,ownedValues,0.0F,arm,ownedOtherHandVisible);
+            }
             if(currentClip.invoke(handler)!=ownedClip){reactionSkipped("Punchy is playing a different clip");return;}
             if(reactionActive)clearReaction();
             reactionX=(player.getRandom().nextFloat()-0.5F)*0.9F;

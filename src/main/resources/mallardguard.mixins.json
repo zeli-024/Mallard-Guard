@@ -3,7 +3,12 @@
   "minVersion": "0.8",
   "compatibilityLevel": "JAVA_21",
   "package": "dev.zeli.mallardguard.mixin",
-  "mixins": [],
+  "mixins": [
+    "ThrownTridentReturnMixin",
+    "LivingEntityDamageAccessor",
+    "LivingEntityShieldReadyMixin",
+    "PiglinGuardMixin"
+  ],
   "client": [
     "client.ItemInHandRendererAccessor",
     "client.MinecraftShieldReleaseMixin",

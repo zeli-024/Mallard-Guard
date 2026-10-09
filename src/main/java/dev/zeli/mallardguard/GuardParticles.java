@@ -9,10 +9,12 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 public final class GuardParticles {
     public static final DeferredRegister<ParticleType<?>> TYPES = DeferredRegister.create(BuiltInRegistries.PARTICLE_TYPE, MallardGuard.ID);
     public static final DeferredHolder<ParticleType<?>, SimpleParticleType> FLYING_SPARK = TYPES.register("flying_spark", () -> new SimpleParticleType(false));
-    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> STREAK_DOT = TYPES.register("streak_dot", () -> new SimpleParticleType(false));
-    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> SPARK_FLASH = TYPES.register("spark_flash", () -> new SimpleParticleType(false));
-    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> PARRY_FLASH = TYPES.register("parry_flash", () -> new SimpleParticleType(false));
-    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> PERFECT_FLASH = TYPES.register("perfect_flash", () -> new SimpleParticleType(false));
+
+    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> SPARK_DEBRIS = TYPES.register("dot_streak", () -> new SimpleParticleType(false));
+
+    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> SPARK_TRACER = TYPES.register("shooting_spark", () -> new SimpleParticleType(false));
+
+    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> CENTER_IMPACT = TYPES.register("center_impact", () -> new SimpleParticleType(false));
 
     private GuardParticles() {}
 }

@@ -12,12 +12,12 @@ import net.minecraft.network.chat.Component;
 
 /** Runtime damage rules edited as part of the main screen's unsaved draft. */
 final class GuardDamageSourcesScreen extends Screen {
-    private static final int MAX_WIDTH=520, MAX_HEIGHT=350, MARGIN=12, INSET=10;
+    private static final int INSET=10;
     private static final int ROW_HEIGHT=24, ROW_CONTROL_HEIGHT=20, TOGGLE_WIDTH=66;
-    private static final int LIST_TOP=94, FOOTER_HEIGHT=36, TRACK_WIDTH=8, TRACK_GAP=8;
-    private static final int EDGE=0xFF947D9A, TEXT=0xFFF5F0F6, MUTED=0xFFA7A0B0;
+    private static final int LIST_TOP=94, FOOTER_HEIGHT=36, TRACK_WIDTH=GuardUiLayout.SCROLL_WIDTH, TRACK_GAP=8;
+    private static final int EDGE=GuardUi.BORDER, TEXT=GuardUi.TEXT, MUTED=GuardUi.MUTED;
     private static final int ENABLED=0xFFB6E8B6, DISABLED=0xFFA7A7A7;
-    private static final int SURFACE=0xA4493E55, LIST_SURFACE=0x78302A39;
+    private static final int LIST_SURFACE=GuardUi.SIDEBAR;
     private final Screen parent;
     private final List<String> recent, catalog;
     private final Map<String,Boolean> rules;
@@ -60,12 +60,11 @@ final class GuardDamageSourcesScreen extends Screen {
     private int sourceX(){return left+INSET+Math.min(90,w/5)+8;}
     private int maxScroll(){return Math.max(0,filtered.size()-rows);}
     private int trackHeight(){return rows*ROW_HEIGHT;}
-    private int thumbHeight(){return Math.max(16,trackHeight()*rows/Math.max(1,filtered.size()));}
-    private int thumbY(){return rowTop()+(maxScroll()==0?0:offset*(trackHeight()-thumbHeight())/maxScroll());}
+    private GuardUiLayout.Scrollbar scrollbar(){return new GuardUiLayout.Scrollbar(trackX(),rowTop(),trackHeight(),rows,filtered.size(),offset);}
 
     @Override protected void init(){
-        w=Math.min(MAX_WIDTH,width-2*MARGIN);h=Math.min(MAX_HEIGHT,height-2*MARGIN);
-        left=(width-w)/2;top=(height-h)/2;
+        w=GuardUiLayout.wideWidth(width);top=GuardUiLayout.screenTop(height);h=height-top-6;
+        left=(width-w)/2;
         rows=Math.max(1,(h-LIST_TOP-FOOTER_HEIGHT)/ROW_HEIGHT);
         filter();offset=Math.clamp(offset,0,maxScroll());rowIds.clear();draggingScroll=false;
         int half=(w-2*INSET-6)/2;
@@ -73,7 +72,7 @@ final class GuardDamageSourcesScreen extends Screen {
         recentButton.active=all;
         var allButton=addRenderableWidget(GuardUi.button("All Sources",left+INSET+half+6,top+28,half,20,()->selectList(true)));
         allButton.active=!all;
-        EditBox search=addRenderableWidget(new EditBox(font,left+INSET,top+54,w-2*INSET,20,Component.literal("Search damage sources")));
+        EditBox search=addRenderableWidget(GuardUi.editBox(font,left+INSET,top+54,w-2*INSET,"Search damage sources"));
         search.setMaxLength(128);search.setHint(Component.literal("name, @mod, #enabled, #disabled"));search.setValue(query);
         search.setTooltip(Tooltip.create(Component.literal("Filter this list by source ID, name or @mod. Use #enabled or #disabled to filter parry rules.")));
         search.setResponder(text->{query=text;offset=0;filter();refreshRows();});
@@ -102,8 +101,8 @@ final class GuardDamageSourcesScreen extends Screen {
         @Override public void renderWidget(GuiGraphics g,int x,int y,float d){GuardUi.paint(g,this,x,y,false,false);}
     }
     @Override public void render(GuiGraphics g,int x,int y,float d){
-        renderBackground(g,x,y,d);
-        g.fill(left,top,left+w,top+h,SURFACE);g.renderOutline(left,top,w,h,EDGE);
+        g.flush();renderBackground(g,x,y,d);g.flush();
+        GuardUi.panel(g,left,top,w,h,false);
         g.drawCenteredString(font,title,width/2,top+10,TEXT);
         int listLeft=left+INSET-2,listRight=left+w-INSET+2;
         g.fill(listLeft,top+80,listRight,listBottom()+2,LIST_SURFACE);
@@ -122,26 +121,19 @@ final class GuardDamageSourcesScreen extends Screen {
             if(hovered&&x<toggleX())hoveredId=id;
         }
         if(rowIds.isEmpty())g.drawCenteredString(font,query.isBlank()&&!all?"No recent damage sources":"No matching sources",width/2,rowTop()+12,MUTED);
-        if(maxScroll()>0){
-            g.fill(trackX(),rowTop(),trackX()+TRACK_WIDTH,listBottom(),0x65302737);
-            int sy=thumbY(),sh=thumbHeight();boolean hover=x>=trackX()&&x<trackX()+TRACK_WIDTH&&y>=sy&&y<sy+sh;
-            g.fill(trackX()+1,sy,trackX()+TRACK_WIDTH-1,sy+sh,hover||draggingScroll?0xFFE9D7C5:0xFFD8BEAA);
-            g.fill(trackX()+TRACK_WIDTH-2,sy,trackX()+TRACK_WIDTH-1,sy+sh,0xFFB29A89);
-        }
+        GuardUi.scrollbar(g,scrollbar(),x,y,draggingScroll);
         g.drawString(font,filtered.size()+" source"+(filtered.size()==1?"":"s")+(editable?"":" · Read only"),left+INSET,top+h-INSET-14,MUTED);
         for(var widget:renderables)widget.render(g,x,y,d);
         if(hoveredId!=null)g.renderTooltip(font,List.of(Component.literal("Mod: "+modName.apply(hoveredId)),Component.literal(hoveredId)),Optional.empty(),x,y);
     }
     private void dragScroll(double y){
-        int travel=trackHeight()-thumbHeight();
-        if(travel<=0)return;
-        int next=Math.clamp((int)Math.round((y-rowTop()-scrollGrab)*maxScroll()/travel),0,maxScroll());
+        int next=scrollbar().scrollAt(y,scrollGrab);
         if(next!=offset){offset=next;refreshRows();}
     }
     @Override public boolean mouseClicked(double x,double y,int button){
-        if(button==0&&maxScroll()>0&&x>=trackX()-2&&x<trackX()+TRACK_WIDTH+2&&y>=rowTop()&&y<listBottom()){
+        if(button==0&&scrollbar().contains(x,y)){
             draggingScroll=true;
-            scrollGrab=y>=thumbY()&&y<thumbY()+thumbHeight()?y-thumbY():thumbHeight()/2.0;
+            scrollGrab=scrollbar().grab(y);
             dragScroll(y);setDragging(true);return true;
         }
         return super.mouseClicked(x,y,button);
@@ -162,5 +154,7 @@ final class GuardDamageSourcesScreen extends Screen {
         return super.mouseScrolled(x,y,sx,sy);
     }
     @Override public void onClose(){accept.accept(new LinkedHashMap<>(rules));Minecraft.getInstance().setScreen(parent);}
-    @Override public boolean isPauseScreen(){return false;}
+    @Override public boolean isPauseScreen(){return parent.isPauseScreen();}
+    @Override public void removed(){draggingScroll=false;super.removed();}
+
 }

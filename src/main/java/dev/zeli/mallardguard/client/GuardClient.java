@@ -65,7 +65,7 @@ public final class GuardClient {
     private static final long MEME_FADE_MS = 200;
     public static void registerArtworkReload(net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent event){event.registerReloadListener((net.minecraft.server.packs.resources.ResourceManagerReloadListener) resources -> {
         GuardShieldArtwork.reload(resources);
-        GuardWorldParticles.clear();
+        GuardParryParticleSpawner.clear();
     });}
     private static boolean wasDown;
     private static int phase;
@@ -93,7 +93,7 @@ public final class GuardClient {
     private static long reportedAttackTick = Long.MIN_VALUE;
 
     private static void reportAttackStart(Minecraft mc) {
-        if (mc.player == null || mc.getConnection() == null || mc.screen != null) return;
+        if (mc.player == null || !mc.player.isAlive() || mc.getConnection() == null || mc.screen != null) return;
         long tick = mc.player.level().getGameTime();
         if (reportedAttackTick == tick) return;
         reportedAttackTick = tick;
@@ -104,7 +104,7 @@ public final class GuardClient {
     @SubscribeEvent
     public static void attackInput(ClientTickEvent.Pre event) {
         Minecraft mc = Minecraft.getInstance();
-        boolean down = mc.player != null && mc.screen == null && mc.options.keyAttack.isDown();
+        boolean down = mc.player != null && mc.player.isAlive() && mc.screen == null && mc.options.keyAttack.isDown();
         if (down && !wasAttackDown) reportAttackStart(mc);
         wasAttackDown = down;
     }
@@ -116,7 +116,8 @@ public final class GuardClient {
         if (event.isAttack() && !event.isCanceled()) reportAttackStart(Minecraft.getInstance());
     }
     private static boolean waitForGuardRelease;
-    private static boolean sessionActive;
+    private static boolean sessionActive, deathCleared;
+    private static Player combatPlayer;
     private static ItemStack guardedShieldStack = ItemStack.EMPTY;
     private static InteractionHand guardedShieldHand;
     private static AttackIndicatorStatus savedAttackIndicator;
@@ -163,6 +164,7 @@ public final class GuardClient {
     }
 
     public static void status(GuardPackets.Status data) {
+        if(!combatPlayerReady(Minecraft.getInstance()))return;
         if (phase == 4 && data.phase() == 0 && GUARD_KEY.isDown() && data.recharge() > 0) {
             waitForGuardRelease = true;
         }
@@ -261,7 +263,10 @@ public final class GuardClient {
 
 
     public static void mobCounter(GuardPackets.MobCounter d) {
+        if(!combatPlayerReady(Minecraft.getInstance()))return;
+        int sequence=feedbackSequence;
         Runnable feedback = () -> {
+            if(sequence!=feedbackSequence)return;
             mobReactionResult = d.perfect() ? 2 : 1;
             GuardDiagnostics.event(GuardDiagnostics.MOB,"Enemy guard feedback: "+(d.perfect()?"perfect":"regular"));
             var player = Minecraft.getInstance().player;
@@ -296,7 +301,7 @@ public final class GuardClient {
     }
 
     public static boolean shieldLike(net.minecraft.world.item.ItemStack stack){
-        return GuardItemRules.shieldLike(stack,latestEligibility==null?GuardConfig.SHIELD_ITEMS.get():latestEligibility.shieldItems(),latestShieldSettings==null?GuardConfig.SHIELD_BLACKLIST.get():latestShieldSettings.shieldBlacklist());
+        return GuardItemRules.clientShieldLike(stack,latestEligibility==null?GuardConfig.SHIELD_ITEMS.get():latestEligibility.shieldItems(),latestShieldSettings==null?GuardConfig.SHIELD_BLACKLIST.get():latestShieldSettings.shieldBlacklist());
     }
 
     public static GuardPackets.ShieldSettings currentShieldSettings() {
@@ -312,6 +317,29 @@ public final class GuardClient {
     static java.util.List<dev.zeli.mallardguard.GuardPoseLibrary.Pose> enforcedAnimations(){return enforcedAnimations;}
     public static GuardPackets.ClientPolicy currentPolicy() {
         return new GuardPackets.ClientPolicy(policyEnabled, dontEnforceMask, GuardClientPreset.encode(policyDefaults),policyAnimations);
+    }
+
+    // Immutable entries are captured when a burst arrives, before any hitlag delay.
+    private static final java.util.Map<Integer, GuardPackets.Palette> playerPalettes = new java.util.HashMap<>();
+    private static GuardPackets.Palette sentPalette;
+    public static void playerPalette(GuardPackets.PlayerPalette data) {
+        if (data.id() <= 0) return;
+        if (data.colors() == null) playerPalettes.remove(data.id());
+        else if (data.colors().valid()) playerPalettes.put(data.id(), data.colors());
+    }
+    private static void shareParticlePalette() {
+        if (Minecraft.getInstance().getConnection() == null || !policyKnown) return;
+        GuardPackets.Palette colors = clientCategoryLocked(GuardClientPreset.PARTICLES) && personalDefaults != null
+            ? GuardPackets.Palette.fromPreset(personalDefaults)
+            : GuardPackets.Palette.readLocal();
+        if (!colors.equals(sentPalette)) {
+            PacketDistributor.sendToServer(new GuardPackets.SetPalette(colors));
+            sentPalette = colors;
+        }
+    }
+    @SubscribeEvent
+    public static void disconnected(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
+        playerPalettes.clear(); sentPalette = null;
     }
 
     public static void clientPolicy(GuardPackets.ClientPolicy data) {
@@ -345,6 +373,7 @@ public final class GuardClient {
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.screen instanceof GuardConfigScreen config) config.refreshPolicy();
+        shareParticlePalette();
     }
 
     static void configMessage(Component message) {
@@ -355,13 +384,17 @@ public final class GuardClient {
 
     public static void saveClientConfig() {
         if (policyEnabled && personalDefaults != null) {
-            int[] edited = GuardClientPreset.readLocal();
-            for (int index = 0; index < edited.length; index++) if (!clientCategoryLocked(GuardClientPreset.categoryOf(index))) personalDefaults[index] = edited[index];
-            for (int category : GuardClientPreset.CATEGORIES) if (clientCategoryLocked(category)) GuardClientPreset.apply(personalDefaults, category);
-            GuardConfig.CLIENT_SPEC.save(); GuardConfig.PUNCHY_SPEC.save();
-            for (int category : GuardClientPreset.CATEGORIES) if (clientCategoryLocked(category)) GuardClientPreset.apply(policyDefaults, category);
+            int[] before=personalDefaults.clone();
+            try{
+                int[] edited=GuardClientPreset.readLocal();
+                for(int index=0;index<edited.length;index++)if(!clientCategoryLocked(GuardClientPreset.categoryOf(index)))personalDefaults[index]=edited[index];
+                for(int category:GuardClientPreset.CATEGORIES)if(clientCategoryLocked(category))GuardClientPreset.apply(personalDefaults,category);
+                GuardConfig.CLIENT_SPEC.save();GuardConfig.PUNCHY_SPEC.save();
+            }catch(RuntimeException error){personalDefaults=before;throw error;}
+            finally{for(int category:GuardClientPreset.CATEGORIES)if(clientCategoryLocked(category))GuardClientPreset.apply(policyDefaults,category);}
         } else { GuardConfig.CLIENT_SPEC.save(); GuardConfig.PUNCHY_SPEC.save(); }
         GuardConfig.clearConfigBackups();
+        shareParticlePalette();
     }
 
     private static void clearClientPolicy() {
@@ -375,6 +408,7 @@ public final class GuardClient {
     }
 
     public static void hitResult(GuardPackets.HitResult data) {
+        if(!combatPlayerReady(Minecraft.getInstance()))return;
         if (data.result() < 1 || data.result() > 3) return;
         hitResult = data.result();
         guardBreakHitResult = data.guardBroken();
@@ -385,10 +419,10 @@ public final class GuardClient {
         if (data.result() == 1 || data.result() == 2) {
             int result = data.result();
             boolean meme = GuardConfig.MEME_FLASH.get();
-            boolean freeze=result==2||!GuardConfig.PERFECT_ONLY_HITLAG.get();
+            boolean freeze=GuardHitlag.frames(result==2)>0;
             var mc=Minecraft.getInstance();
-            PunchyGuardCompat.parrySucceeded(freeze && GuardConfig.HITLAG_FRAMES.get()>0 && mc.screen==null && mc.level!=null);
-            GuardHitlag.trigger(result == 2 || !GuardConfig.PERFECT_ONLY_HITLAG.get(), result == 2, () -> {
+            PunchyGuardCompat.parrySucceeded(freeze && mc.screen==null && mc.level!=null);
+            GuardHitlag.trigger(result == 2, () -> {
                 if (data.retaliationToken() > 0 && Minecraft.getInstance().getConnection() != null)
                     PacketDistributor.sendToServer(new GuardPackets.FeedbackComplete(data.retaliationToken()));
                 if (sequence != feedbackSequence || Minecraft.getInstance().player == null) return;
@@ -475,11 +509,12 @@ public final class GuardClient {
 
     public static void sparks(GuardPackets.Sparks data) {
         GuardDiagnostics.event(GuardDiagnostics.DAMAGE,"Particle feedback received: "+data);
+        GuardPackets.Palette palette = playerPalettes.get(data.paletteId());
         if (data.defender()) {
-            GuardHitlag.afterFreeze(() -> GuardWorldParticles.spawn(data));
+            GuardHitlag.afterFreeze(() -> GuardParryParticleSpawner.spawn(data, palette));
             return;
         }
-        GuardWorldParticles.spawn(data);
+        GuardParryParticleSpawner.spawn(data, palette);
     }
 
     @SubscribeEvent
@@ -506,7 +541,7 @@ public final class GuardClient {
         AttributeInstance speed = mc.player.getAttribute(Attributes.MOVEMENT_SPEED);
         if (speed == null) return;
         AttributeModifier guard = speed.getModifier(GuardState.GUARD_SLOWDOWN);
-        if (guard == null || guard.amount() >= 0) return;
+        if (guard == null) return;
         double walking = mc.player.getAbilities().getWalkingSpeed();
         double speedFraction = 1.0D + guard.amount();
         if (walking <= 0.0D) return;
@@ -519,44 +554,60 @@ public final class GuardClient {
             event.setNewFovModifier((float) (event.getNewFovModifier() * unguardedFactor / currentFactor));
     }
 
+    private static void clearCombatState(Minecraft mc){
+        ++feedbackSequence; // Invalidate queued feedback from the previous life.
+        if(ownsGuardedShieldUse(mc))mc.player.stopUsingItem();
+        clearGuardedShieldUse();
+        if(mc.player!=null)GuardState.updateMovement(mc.player,false);
+        restoreAttackIndicator();
+        wasDown=wasGuardKeyDown=wasAttackDown=false;
+        waitForGuardRelease=mc.player!=null&&GUARD_KEY.isDown();
+        reportedAttackTick=Long.MIN_VALUE;
+        GuardState.clearClientAttackLock();GuardFeint.clear();
+        phase=elapsed=recharge=hitResult=mobReactionResult=0;
+        offhand=guardBreakHitResult=readyGlowQueued=false;
+        resultStartMs=screenFlashStartMs=memeStartMs=chargeGlowStartMs=stanceStartMs=blockStartMs=strainedBlockStartMs=mobCounterStart=0;
+        memeIndex=-1;
+        GuardChromatic.clear();GuardHitlag.clear();PunchyGuardCompat.clearSession();
+    }
+    private static boolean combatPlayerReady(Minecraft mc){
+        if(mc.player==null||mc.getConnection()==null)return false;
+        if(combatPlayer!=mc.player){clearCombatState(mc);combatPlayer=mc.player;deathCleared=false;}
+        if(!mc.player.isAlive()){
+            if(!deathCleared){clearCombatState(mc);deathCleared=true;}
+            return false;
+        }
+        deathCleared=false;return true;
+    }
+
     @SubscribeEvent
     public static void tick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.getConnection() == null) {
+            if (mc.getConnection() == null) { playerPalettes.clear(); sentPalette = null; }
             clearClientPolicy();
             GuardThirdPerson.clear();
-            if(sessionActive){PunchyGuardCompat.clearSession();GuardHitlag.clear();GuardWorldParticles.clear();GuardDiagnostics.clear();sessionActive=false;}
+            if(sessionActive){GuardPackets.clearClientSnapshot();PunchyGuardCompat.clearSession();GuardHitlag.clear();GuardParryParticleSpawner.clear();GuardDiagnostics.clear();sessionActive=false;}
             latestShieldSettings = null;latestEligibility=null;GuardState.setClientRules(null);GuardState.setClientShieldBlacklist("");
             latestMobSettings = null; GuardChromatic.clear(); mobCounterStart=0;mobReactionResult=0;
             serverConsumablePriority = true;
             GuardState.setClientCooldownPreventsGuard(true);
             GuardState.setClientAllowEmptyHand(false);
             if (mc.player != null) GuardState.updateMovement(mc.player, false);
-            restoreAttackIndicator();
-            wasDown = false;
-            wasGuardKeyDown = false;
-            wasAttackDown = false;
-            reportedAttackTick = Long.MIN_VALUE;
-            GuardState.clearClientAttackLock();
-            GuardFeint.clear();
-            waitForGuardRelease = false;
-            clearGuardedShieldUse();
-            phase = recharge = 0;
-            hitResult = 0;
-            resultStartMs = 0;
-            chargeGlowStartMs = 0;
-            stanceStartMs = 0;
-            blockStartMs = 0;
-            strainedBlockStartMs = 0;
-            readyGlowQueued = false;
+            if(combatPlayer!=null){clearCombatState(mc);combatPlayer=null;deathCleared=false;}
             return;
         }
-        sessionActive = true;
+        sessionActive = true;GuardPackets.expireClientSnapshot();
+        if(!combatPlayerReady(mc))return;
         if (ModList.get().isLoaded("simplyswords") && !GuardConfig.SIMPLY_SWORDS_NOTICE_SHOWN.get()) {
             GuardConfig.SIMPLY_SWORDS_NOTICE_SHOWN.set(true);
             GuardConfig.CLIENT_SPEC.save();
             GuardConfig.clearConfigBackups();
             mc.player.displayClientMessage(Component.translatable("message.mallardguard.simply_swords_bind_ability"), false);
+        }
+        if(latestShieldSettings!=null && latestShieldSettings.shieldExpansionActive() && ModList.get().isLoaded("shieldexp") && !GuardConfig.SHIELD_EXPANSION_NOTICE_SHOWN.get()){
+            GuardConfig.SHIELD_EXPANSION_NOTICE_SHOWN.set(true);GuardConfig.CLIENT_SPEC.save();GuardConfig.clearConfigBackups();
+            mc.player.displayClientMessage(Component.translatable("message.mallardguard.shield_expansion_item_only"),false);
         }
         if (!policyRequested) {
             policyRequested = true;
@@ -651,7 +702,7 @@ public final class GuardClient {
     public static void beforeLayer(RenderGuiLayerEvent.Pre event) {
         if (savedAttackIndicator != null) restoreAttackIndicator();
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui || !GuardConfig.HUD.get() ||
+        if (mc.player == null || !mc.player.isAlive() || mc.options.hideGui || !GuardConfig.HUD.get() ||
             (phase == 0 && recharge == 0 && !resultVisible() && !readyGlowQueued && !readyGlowVisible())) return;
         if (event.getName().equals(VanillaGuiLayers.CROSSHAIR) || event.getName().equals(VanillaGuiLayers.HOTBAR)) {
             savedAttackIndicator = mc.options.attackIndicator().get();
@@ -689,7 +740,7 @@ public final class GuardClient {
     public static void render(RenderGuiEvent.Post event) {
         restoreAttackIndicator();
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui) return;
+        if (mc.player == null || !mc.player.isAlive() || mc.options.hideGui) return;
         long counterAge = System.currentTimeMillis() - mobCounterStart;
         if (mobCounterStart != 0 && mobReactionResult == 2 && counterAge >= 0 && counterAge < FLASH_DURATION_MS)
             renderBlockVignette(event.getGuiGraphics(), counterAge);
