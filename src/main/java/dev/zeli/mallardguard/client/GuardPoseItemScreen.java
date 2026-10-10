@@ -72,7 +72,6 @@ final class GuardPoseItemScreen extends Screen {
     GuardPoseItemScreen(Screen parent,List<String> items,int handMode,BiConsumer<List<String>,Integer> accept){this(parent,items,handMode,accept,true);}
     GuardPoseItemScreen(Screen parent,List<String> items,int handMode,BiConsumer<List<String>,Integer> accept,boolean showHandMode){super(Component.literal("Assign items"));this.parent=parent;this.accept=accept;this.showHandMode=showHandMode;selected=new RuleDraft(items);this.handMode=handMode;saved=new State(List.copyOf(selected),handMode);for(Item i:BuiltInRegistries.ITEM)if(i!=Items.AIR){all.add(i);categoryBits.put(i,GuardItemSearch.categories(i));itemById.put(BuiltInRegistries.ITEM.getKey(i).toString(),i);}filter();}
 
-
     GuardPoseItemScreen(Screen parent,String title,String rules,Consumer<String> accept){
         this(parent,rules.isBlank()?List.of():Arrays.stream(rules.split(",")).map(String::trim).toList(),0,(items,hand)->accept.accept(String.join(",",items)),false);
         ruleMode=true;ruleTitle=title;
@@ -175,38 +174,38 @@ final class GuardPoseItemScreen extends Screen {
         search.setMaxLength(256);search.setValue(filter);
         search.setResponder(text->{filter=text;filter();});
         search.setHint(Component.literal("Search name, ID, #tag or @mod"));
-        search.setTooltip(Tooltip.create(Component.literal("Search the item browser.\nNames, IDs, #tags and @mods are supported.\nSearch never changes your assignments.")));
+        search.setTooltip(GuardUi.tooltip("Search the item browser.\nNames, IDs, #tags and @mods are supported.\nSearch never changes your assignments."));
         addRenderableWidget(GuardUi.button("?",assignedLeft+assignedWidth-24,top+3,20,20,this::help));
         int tabWidth=layout.tabWidth(),tabY=layout.tabsY();
         addRenderableWidget(GuardUi.button("Items",left+8,tabY,tabWidth,20,()->{filtersOpen=false;rebuild();}));
         addRenderableWidget(GuardUi.button("Filters",left+12+tabWidth,tabY,tabWidth,20,()->{filtersOpen=true;rebuild();}));
         selectAllButton=addRenderableWidget(GuardUi.button(panelWidth<190?"All":"Select All",left+panelWidth-(panelWidth<190?72:80),tabY,panelWidth<190?58:66,20,()->selectAll(false)));
         selectAllButton.active=!matches.isEmpty();selectAllButton.visible=!filtersOpen;
-        selectAllButton.setTooltip(Tooltip.create(Component.literal(combined?"Select every matching item, including offscreen rows.\nLeft: allow; right: block.":"Assign every matching item, including offscreen rows.")));
+        selectAllButton.setTooltip(GuardUi.tooltip(combined?"Select every matching item, including offscreen rows.\nLeft: allow; right: block.":"Assign every matching item, including offscreen rows."));
         if(filtersOpen)addFilters();
         else if(ruleMode&&(!countMode||combined)){
             int buttonWidth=Math.min(88,panelWidth/3);
             ruleInput=addRenderableWidget(GuardUi.editBox(font,left+10,layout.ruleY(),panelWidth-buttonWidth-30,"Assignment rule"));
             ruleInput.setMaxLength(256);ruleInput.setValue(ruleText);ruleInput.setHint(Component.literal("@mod, #tag, ID or !exception"));
             ruleInput.setResponder(text->{ruleText=text;updateRuleButton();});
-            ruleInput.setTooltip(Tooltip.create(Component.literal("Enter a group rule or ! exception.\nThis field assigns rules; Search only filters browsing.")));
+            ruleInput.setTooltip(GuardUi.tooltip("Enter a group rule or ! exception.\nThis field assigns rules; Search only filters browsing."));
             ruleButton=addRenderableWidget(GuardUi.button(combined?"Assign Rule":ruleAction(),left+panelWidth-buttonWidth-14,layout.ruleY(),buttonWidth,20,()->{if(combined)assignRules(List.of(queryRule()),false);else toggleRule();}));
             updateRuleButton();
-            ruleButton.setTooltip(Tooltip.create(Component.literal(combined?"Assign the entered rule. Left: allow; right: block.\nEither click removes a rule already assigned.":"Assign or remove the entered rule.")));
+            ruleButton.setTooltip(GuardUi.tooltip(combined?"Assign the entered rule. Left: allow; right: block.\nEither click removes a rule already assigned.":"Assign or remove the entered rule."));
         }else if(showHandMode){
-            addRenderableWidget(GuardUi.button("Hand: "+new String[]{"Off","Combine","Strict"}[handMode],left+8,layout.ruleY(),panelWidth-22,20,()->{handMode=(handMode+1)%3;rebuild();})).setTooltip(Tooltip.create(Component.literal("Off: held items only. Combine: items and empty hands.\nStrict: empty hands only. Server eligibility still applies.")));
+            addRenderableWidget(GuardUi.button("Hand: "+new String[]{"Off","Combine","Strict"}[handMode],left+8,layout.ruleY(),panelWidth-22,20,()->{handMode=(handMode+1)%3;rebuild();})).setTooltip(GuardUi.tooltip("Off: held items only. Combine: items and empty hands.\nStrict: empty hands only. Server eligibility still applies."));
         }
         if(countMode){
             countInput=addRenderableWidget(GuardUi.editBox(font,assignedLeft+assignedWidth-58,layout.tabsY(),40,"New item block limit"));
             countInput.setMaxLength(3);countInput.setValue(Integer.toString(assignmentCount));
             countInput.setFilter(GuardPoseItemScreen::validCountInput);
             countInput.setResponder(text->{try{assignmentCount=Integer.parseInt(text);}catch(NumberFormatException ignored){}});
-            countInput.setTooltip(Tooltip.create(Component.literal("New allowed items use this block limit.\n0 means unlimited; existing limits are editable below.")));
+            countInput.setTooltip(GuardUi.tooltip("New allowed items use this block limit.\n0 means unlimited; existing limits are editable below."));
         }
         addAssignedControls();
         int edge=assignedLeft+assignedWidth,actionWidth=layout.actionWidth();
         addRenderableWidget(GuardUi.button("Reset",left+8,layout.footerY(),actionWidth,20,()->GuardUi.confirm(this,"Reset assignments?",defaultAllowed==null?"Clear this screen's assignments and exceptions.\nApply saves the reset.":"Restore vanilla equipment with axes blocked.\nApply saves the reset.",this::resetAssignments)));
-        addRenderableWidget(GuardUi.button("Apply",edge-2*actionWidth-12,layout.footerY(),actionWidth,20,()->GuardUi.apply(this,()->apply(false),()->apply(true))));
+        addRenderableWidget(GuardUi.button("Apply",edge-2*actionWidth-12,layout.footerY(),actionWidth,20,()->apply(true)));
         addRenderableWidget(GuardUi.button("Close",edge-actionWidth-8,layout.footerY(),actionWidth,20,this::onClose));
     }
     private static boolean validCountInput(String text){return text.matches("[0-9]{0,3}")&&(text.isEmpty()||Integer.parseInt(text)<=dev.zeli.mallardguard.GuardItemBlockCounts.MAX_COUNT);}
@@ -221,7 +220,7 @@ final class GuardPoseItemScreen extends Screen {
         for(int k=0;k<GuardItemSearch.CATEGORIES.length;k++){
             final int bit=1<<k;String category=GuardItemSearch.CATEGORIES[k];
             Button check=addRenderableWidget(GuardUi.button(font.plainSubstrByWidth(((categoryMask&bit)!=0?"[x] ":"[ ] ")+category,cell-8),left+8+(k%2)*(cell+4),gridTop()+(k/2)*22,cell,20,()->{categoryMask^=bit;filter();rebuild();}));
-            check.setTooltip(Tooltip.create(Component.literal(category+". Filter browsing only.\nChecked categories combine; no checks shows everything.")));
+            check.setTooltip(GuardUi.tooltip(category+". Filter browsing only.\nChecked categories combine; no checks shows everything."));
         }
         addRenderableWidget(GuardUi.button("Clear",left+panelWidth-(panelWidth<190?72:80),layout.tabsY(),panelWidth<190?58:66,20,()->{categoryMask=0;filter="";filter();rebuild();}));
     }
@@ -243,7 +242,7 @@ final class GuardPoseItemScreen extends Screen {
                     if(text.isEmpty()){counts.remove(id);return;}
                     try{setCount(id,Integer.parseInt(text));}catch(NumberFormatException ignored){}
                 });
-                amount.setTooltip(Tooltip.create(Component.literal("Block limit: 0–100; 0 is unlimited.")));
+                amount.setTooltip(GuardUi.tooltip("Block limit: 0–100; 0 is unlimited."));
             }
             rowCounts.add(amount);
             rowRemovers.add(addRenderableWidget(GuardUi.button("x",assignedLeft+assignedWidth-38,y,20,20,()->{
@@ -257,7 +256,7 @@ final class GuardPoseItemScreen extends Screen {
         try{
             for(int r=0;r<rowRemovers.size();r++){
                 String entry=visibleEntry(r);Button remove=rowRemovers.get(r);remove.visible=entry!=null;
-                if(entry!=null)remove.setTooltip(Tooltip.create(Component.literal("Remove "+entry)));
+                if(entry!=null)remove.setTooltip(GuardUi.tooltip("Remove "+entry));
                 EditBox amount=rowCounts.get(r);
                 if(amount!=null){
                     String id=entry==null?null:entryRule(entry);amount.visible=id!=null&&itemById.containsKey(id);

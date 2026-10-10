@@ -1,7 +1,6 @@
 package dev.zeli.mallardguard.client;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import dev.zeli.mallardguard.GuardSparkTracerConfig;
 import dev.zeli.mallardguard.GuardParticleColors;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;

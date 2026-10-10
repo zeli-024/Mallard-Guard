@@ -74,11 +74,11 @@ final class GuardDamageSourcesScreen extends Screen {
         allButton.active=!all;
         EditBox search=addRenderableWidget(GuardUi.editBox(font,left+INSET,top+54,w-2*INSET,"Search damage sources"));
         search.setMaxLength(128);search.setHint(Component.literal("name, @mod, #enabled, #disabled"));search.setValue(query);
-        search.setTooltip(Tooltip.create(Component.literal("Filter this list by source ID, name or @mod. Use #enabled or #disabled to filter parry rules.")));
+        search.setTooltip(GuardUi.tooltip("Filter this list by source ID, name or @mod. Use #enabled or #disabled to filter parry rules."));
         search.setResponder(text->{query=text;offset=0;filter();refreshRows();});
         refreshRows();
         var done=addRenderableWidget(GuardUi.button("Done",left+w-INSET-78,top+h-INSET-20,78,20,this::onClose));
-        done.setTooltip(Tooltip.create(Component.literal("Return to settings. Use Apply there to save these rules.")));
+        done.setTooltip(GuardUi.tooltip("Return to settings. Use Apply there to save these rules."));
     }
     private void selectList(boolean showAll){all=showAll;query="";offset=0;clearWidgets();init();}
     private void refreshRows(){
@@ -88,8 +88,8 @@ final class GuardDamageSourcesScreen extends Screen {
             String id=filtered.get(offset+i);rowIds.add(id);
             SourceButton b=addRenderableWidget(new SourceButton(toggleX(),rowTop()+i*ROW_HEIGHT+2,id));
             b.active=editable;
-            b.setTooltip(Tooltip.create(Component.literal("Mod: "+modName.apply(id)+"\n"+id+"\nDefault: "+(GuardDamageRules.defaultAllowed(id)?"On":"Off")
-                +(editable?". Save with Apply in settings.":". Server operator permission required."))));
+            b.setTooltip(GuardUi.tooltip("Mod: "+modName.apply(id)+"\n"+id+"\nDefault: "+(GuardDamageRules.defaultAllowed(id)?"On":"Off")
+                +(editable?". Save with Apply in settings.":". Server operator permission required.")));
         }
     }
     private final class SourceButton extends Button {

@@ -4,8 +4,6 @@ import dev.zeli.mallardguard.GuardPoseLibrary;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.AbstractSliderButton;
-import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
@@ -24,20 +22,16 @@ final class GuardPoseMotionScreen extends Screen {
         slider("Ease Strength",22,200,top+75,"Strength of the easing curve, 0–200%.");
         int bw=(w-22)/2;
         addRenderableWidget(GuardUi.button("Easing: "+new String[]{"Linear","Ease In","Ease Out","Ease In/Out"}[draft.values[21]],left+8,top+99,bw,20,()->{draft.values[21]=(draft.values[21]+1)%4;rebuild();}));
-        addRenderableWidget(GuardUi.button("Hold: "+(draft.maintainHeld?"On":"Off"),left+14+bw,top+99,bw,20,()->{draft.maintainHeld=!draft.maintainHeld;rebuild();})).setTooltip(Tooltip.create(Component.literal("On maintains the pose while guarding. Off plays entry and return once.")));
+        addRenderableWidget(GuardUi.button("Hold: "+(draft.maintainHeld?"On":"Off"),left+14+bw,top+99,bw,20,()->{draft.maintainHeld=!draft.maintainHeld;rebuild();})).setTooltip(GuardUi.tooltip("On maintains the pose while guarding. Off plays entry and return once."));
         addRenderableWidget(GuardUi.button("?",left+w-30,top+4,22,18,()->GuardUi.choices(this,"Motion Help","TIMING\nEnter blends into guard; Return blends back out.\nA newer animation interrupts the current one.\n\nTUNING\nDrag timing in 10 ms steps. Scroll for 1 ms; Shift-scroll for 10 ms.\nEasing changes the curve. Hold maintains the pose while guarding.",new GuardUi.Choice("Back",()->Minecraft.getInstance().setScreen(this)))));
         int action=(w-22)/2;
         addRenderableWidget(GuardUi.button("Save",left+8,top+140,action,20,()->accept.accept(draft.copy())));
         addRenderableWidget(GuardUi.button("Close",left+14+action,top+140,action,20,this::onClose));
     }
     private void slider(String label,int field,int max,int y,String tooltip){
-        var slider=addRenderableWidget(new AbstractSliderButton(left+8,y,w-16,20,Component.empty(),draft.values[field]/(double)max){
-            {updateMessage();}
-            @Override protected void updateMessage(){setMessage(Component.literal(label+": "+draft.values[field]+(field==22?"%":" ms")));}
-            @Override protected void applyValue(){int step=GuardUi.dragStep(0,max,1);draft.values[field]=Math.clamp((int)Math.round(value*max/step)*step,0,max);value=draft.values[field]/(double)max;}
-            @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y)||sy==0)return false;draft.values[field]=Math.clamp(draft.values[field]+(int)Math.signum(sy)*(hasShiftDown()?10:1),0,max);value=draft.values[field]/(double)max;updateMessage();return true;}
-            @Override public void renderWidget(GuiGraphics g,int x,int my,float d){GuardUi.slider(g,this,value,draft.values[field]!=original.values[field]);}
-        });slider.setTooltip(Tooltip.create(Component.literal(tooltip)));
+        var slider=addRenderableWidget(new GuardSlider(left+8,y,w-16,20,draft.values[field],0,max,
+            GuardUi.dragStep(0,max,1), value -> label+": "+value+(field==22?"%":" ms"),
+            value -> draft.values[field]=value, () -> draft.values[field]!=original.values[field]));slider.setTooltip(GuardUi.tooltip(tooltip));
     }
     @Override public void render(GuiGraphics g,int x,int y,float d){g.flush();renderBackground(g,x,y,d);g.flush();GuardUi.panel(g,left,top,w,172,false);g.drawCenteredString(font,title,width/2,top+9,GuardUi.TEXT);for(var widget:renderables)widget.render(g,x,y,d);}
     @Override public void onClose(){Minecraft.getInstance().setScreen(parent);}

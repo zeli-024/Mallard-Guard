@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
@@ -24,7 +23,7 @@ final class GuardPoseCopyScreen extends Screen {
         addRenderableWidget(GuardUi.button("?",left+panelWidth-30,top+5,22,18,()->GuardUi.choices(this,"Copy Preset Help","COPY A PRESET\nChoose the source preset. Its values are copied into your draft.\nYour preset keeps its identity and enabled state.\n\nSAVE\nSave the editor to commit the copied values.\nBack returns without choosing a source.",new GuardUi.Choice("Back",()->Minecraft.getInstance().setScreen(this)))));
         for(int i=start;i<Math.min(poses.size(),start+rows);i++){
             var pose=poses.get(i);var button=addRenderableWidget(GuardUi.button(pose.name,left+8,top+28+(i-start)*24,panelWidth-16,20,()->{accept.accept(pose.copy());Minecraft.getInstance().setScreen(parent);}));
-            button.active=!pose.id.equals(current);button.setTooltip(Tooltip.create(Component.literal(button.active?"Copy this preset into the current draft. Save to commit.":"You are already editing this preset.")));
+            button.active=!pose.id.equals(current);button.setTooltip(GuardUi.tooltip(button.active?"Copy this preset into the current draft. Save to commit.":"You are already editing this preset."));
         }
         addRenderableWidget(GuardUi.button("Back",left+8,top+32+rows*24,panelWidth-16,20,this::onClose));
     }

@@ -1,10 +1,11 @@
 package dev.zeli.mallardguard.client;
 
+import dev.zeli.mallardguard.GuardConfigTransfer;
+
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.zeli.mallardguard.GuardConfig;
 import dev.zeli.mallardguard.GuardShieldReactions;
 import dev.zeli.mallardguard.GuardDiagnostics;
-import dev.zeli.mallardguard.GuardClientPreset;
 import dev.zeli.mallardguard.GuardItemRules;
 import dev.zeli.mallardguard.GuardPackets;
 import dev.zeli.mallardguard.GuardSounds;
@@ -121,9 +122,6 @@ public final class GuardClient {
     private static ItemStack guardedShieldStack = ItemStack.EMPTY;
     private static InteractionHand guardedShieldHand;
     private static AttackIndicatorStatus savedAttackIndicator;
-    private static boolean policyKnown, policyEnabled, policyRequested;
-    private static int dontEnforceMask;
-    private static int[] policyDefaults = GuardClientPreset.DEFAULTS.clone(), personalDefaults;
 
     private GuardClient() {}
 
@@ -260,8 +258,6 @@ public final class GuardClient {
     private static long mobCounterStart;
     private static int mobReactionResult;
 
-
-
     public static void mobCounter(GuardPackets.MobCounter d) {
         if(!combatPlayerReady(Minecraft.getInstance()))return;
         int sequence=feedbackSequence;
@@ -278,9 +274,6 @@ public final class GuardClient {
         if (d.perfect()) GuardHitlag.triggerMobCounter(feedback);
         else feedback.run();
     }
-
-
-
 
     private static GuardPackets.MobSettings latestMobSettings;
     public static GuardPackets.MobSettings currentMobSettings() {
@@ -308,103 +301,22 @@ public final class GuardClient {
         return latestShieldSettings == null ? GuardConfig.defaultShieldSnapshot() : latestShieldSettings;
     }
 
-    public static boolean clientCategoryLocked(int category) {
-        return policyEnabled && (dontEnforceMask & category) == 0;
-    }
-
-    private static String policyAnimations="";
-    private static java.util.List<dev.zeli.mallardguard.GuardPoseLibrary.Pose> enforcedAnimations=java.util.List.of();
-    static java.util.List<dev.zeli.mallardguard.GuardPoseLibrary.Pose> enforcedAnimations(){return enforcedAnimations;}
-    public static GuardPackets.ClientPolicy currentPolicy() {
-        return new GuardPackets.ClientPolicy(policyEnabled, dontEnforceMask, GuardClientPreset.encode(policyDefaults),policyAnimations);
-    }
-
-    // Immutable entries are captured when a burst arrives, before any hitlag delay.
-    private static final java.util.Map<Integer, GuardPackets.Palette> playerPalettes = new java.util.HashMap<>();
-    private static GuardPackets.Palette sentPalette;
-    public static void playerPalette(GuardPackets.PlayerPalette data) {
-        if (data.id() <= 0) return;
-        if (data.colors() == null) playerPalettes.remove(data.id());
-        else if (data.colors().valid()) playerPalettes.put(data.id(), data.colors());
-    }
-    private static void shareParticlePalette() {
-        if (Minecraft.getInstance().getConnection() == null || !policyKnown) return;
-        GuardPackets.Palette colors = clientCategoryLocked(GuardClientPreset.PARTICLES) && personalDefaults != null
-            ? GuardPackets.Palette.fromPreset(personalDefaults)
-            : GuardPackets.Palette.readLocal();
-        if (!colors.equals(sentPalette)) {
-            PacketDistributor.sendToServer(new GuardPackets.SetPalette(colors));
-            sentPalette = colors;
-        }
-    }
+    public static boolean clientCategoryLocked(int category) { return GuardClientPolicy.clientCategoryLocked(category); }
+    static java.util.List<dev.zeli.mallardguard.GuardPoseLibrary.Pose> enforcedAnimations() { return GuardClientPolicy.enforcedAnimations(); }
+    public static GuardPackets.ClientPolicy currentPolicy() { return GuardClientPolicy.currentPolicy(); }
+    public static void playerPalette(GuardPackets.PlayerPalette data) { GuardClientPolicy.playerPalette(data); }
+    public static void clientPolicy(GuardPackets.ClientPolicy data) { GuardClientPolicy.clientPolicy(data); }
+    public static void saveClientConfig() { GuardClientPolicy.saveClientConfig(); }
     @SubscribeEvent
     public static void disconnected(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
-        playerPalettes.clear(); sentPalette = null;
-    }
-
-    public static void clientPolicy(GuardPackets.ClientPolicy data) {
-        GuardDiagnostics.event(GuardDiagnostics.CONFIG,"Client policy received: enabled="+data.enabled()+", exceptions="+data.dontEnforceMask());
-        var parsedAnimations=dev.zeli.mallardguard.GuardPoseLibrary.parseAnimations(data.animations());
-        if(!data.animations().isEmpty()&&parsedAnimations==null)return;
-        int[] values = GuardClientPreset.parse(data.defaults());
-        if (values == null || data.dontEnforceMask() < 0 || (data.dontEnforceMask() & ~GuardClientPreset.ALL_CATEGORIES) != 0) return;
-        policyAnimations=data.animations();enforcedAnimations=parsedAnimations==null?java.util.List.of():parsedAnimations;
-        if (!policyKnown) {
-            personalDefaults = GuardClientPreset.readLocal();
-            policyKnown = true;
-        }
-        boolean firstActivation = data.enabled() && !policyEnabled;
-        if (!data.enabled() && policyEnabled) {
-            for (int category : GuardClientPreset.CATEGORIES) GuardClientPreset.apply(personalDefaults, category);
-        }
-        policyEnabled = data.enabled();
-        dontEnforceMask = data.dontEnforceMask();
-        policyDefaults = values;
-        if (policyEnabled) {
-            for (int category : GuardClientPreset.CATEGORIES) {
-                if (firstActivation || clientCategoryLocked(category)) GuardClientPreset.apply(values, category);
-            }
-            if (firstActivation) {
-                for (int index = 0; index < values.length; index++) {
-                    if ((dontEnforceMask & GuardClientPreset.categoryOf(index)) != 0)
-                        personalDefaults[index] = values[index];
-                }
-            }
-        }
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.screen instanceof GuardConfigScreen config) config.refreshPolicy();
-        shareParticlePalette();
+        GuardClientPolicy.clearClientPolicy();
+        clearCombatState(Minecraft.getInstance());
     }
 
     static void configMessage(Component message) {
         var player = Minecraft.getInstance().player;
         if (player != null) player.displayClientMessage(message, false);
         else org.slf4j.LoggerFactory.getLogger("MallardGuard").info("{}", message.getString());
-    }
-
-    public static void saveClientConfig() {
-        if (policyEnabled && personalDefaults != null) {
-            int[] before=personalDefaults.clone();
-            try{
-                int[] edited=GuardClientPreset.readLocal();
-                for(int index=0;index<edited.length;index++)if(!clientCategoryLocked(GuardClientPreset.categoryOf(index)))personalDefaults[index]=edited[index];
-                for(int category:GuardClientPreset.CATEGORIES)if(clientCategoryLocked(category))GuardClientPreset.apply(personalDefaults,category);
-                GuardConfig.CLIENT_SPEC.save();GuardConfig.PUNCHY_SPEC.save();
-            }catch(RuntimeException error){personalDefaults=before;throw error;}
-            finally{for(int category:GuardClientPreset.CATEGORIES)if(clientCategoryLocked(category))GuardClientPreset.apply(policyDefaults,category);}
-        } else { GuardConfig.CLIENT_SPEC.save(); GuardConfig.PUNCHY_SPEC.save(); }
-        GuardConfig.clearConfigBackups();
-        shareParticlePalette();
-    }
-
-    private static void clearClientPolicy() {
-        if (policyKnown && policyEnabled && personalDefaults != null)
-            for (int category : GuardClientPreset.CATEGORIES) GuardClientPreset.apply(personalDefaults, category);
-        policyAnimations="";enforcedAnimations=java.util.List.of();
-        policyKnown = policyEnabled = false;
-        policyRequested = false;
-        dontEnforceMask = 0;
-        personalDefaults = null;
     }
 
     public static void hitResult(GuardPackets.HitResult data) {
@@ -509,7 +421,7 @@ public final class GuardClient {
 
     public static void sparks(GuardPackets.Sparks data) {
         GuardDiagnostics.event(GuardDiagnostics.DAMAGE,"Particle feedback received: "+data);
-        GuardPackets.Palette palette = playerPalettes.get(data.paletteId());
+        GuardPackets.Palette palette = GuardClientPolicy.palette(data.paletteId());
         if (data.defender()) {
             GuardHitlag.afterFreeze(() -> GuardParryParticleSpawner.spawn(data, palette));
             return;
@@ -584,10 +496,9 @@ public final class GuardClient {
     public static void tick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.getConnection() == null) {
-            if (mc.getConnection() == null) { playerPalettes.clear(); sentPalette = null; }
-            clearClientPolicy();
+            GuardClientPolicy.clearClientPolicy();
             GuardThirdPerson.clear();
-            if(sessionActive){GuardPackets.clearClientSnapshot();PunchyGuardCompat.clearSession();GuardHitlag.clear();GuardParryParticleSpawner.clear();GuardDiagnostics.clear();sessionActive=false;}
+            if(sessionActive){GuardConfigTransfer.clearClientSnapshot();PunchyGuardCompat.clearSession();GuardHitlag.clear();GuardParryParticleSpawner.clear();GuardDiagnostics.clear();sessionActive=false;}
             latestShieldSettings = null;latestEligibility=null;GuardState.setClientRules(null);GuardState.setClientShieldBlacklist("");
             latestMobSettings = null; GuardChromatic.clear(); mobCounterStart=0;mobReactionResult=0;
             serverConsumablePriority = true;
@@ -597,7 +508,7 @@ public final class GuardClient {
             if(combatPlayer!=null){clearCombatState(mc);combatPlayer=null;deathCleared=false;}
             return;
         }
-        sessionActive = true;GuardPackets.expireClientSnapshot();
+        sessionActive = true;GuardConfigTransfer.expireClientSnapshot();
         if(!combatPlayerReady(mc))return;
         if (ModList.get().isLoaded("simplyswords") && !GuardConfig.SIMPLY_SWORDS_NOTICE_SHOWN.get()) {
             GuardConfig.SIMPLY_SWORDS_NOTICE_SHOWN.set(true);
@@ -609,10 +520,7 @@ public final class GuardClient {
             GuardConfig.SHIELD_EXPANSION_NOTICE_SHOWN.set(true);GuardConfig.CLIENT_SPEC.save();GuardConfig.clearConfigBackups();
             mc.player.displayClientMessage(Component.translatable("message.mallardguard.shield_expansion_item_only"),false);
         }
-        if (!policyRequested) {
-            policyRequested = true;
-            PacketDistributor.sendToServer(new GuardPackets.RequestClientPolicy());
-        }
+        GuardClientPolicy.requestIfNeeded();
         while (CONFIG_KEY.consumeClick()) {
             if (mc.screen == null) {
                 openConfig();
@@ -773,7 +681,6 @@ public final class GuardClient {
         }
         if (!GuardConfig.HUD.get()) return;
 
-
         if (GuardConfig.SHIELD_EFFECTS.get() && mobCounterStart != 0 && counterAge >= 0
             && counterAge < (GuardShieldReactions.millis(mobReactionResult==2?1:0))) {
             renderMobReaction(event.getGuiGraphics(), shieldCenterX, shieldCenterY, shieldSize, counterAge);
@@ -931,10 +838,6 @@ public final class GuardClient {
         graphics.blit(RED_SHIELD, 0, 0, 0, 0, 16, 16, 16, 16);
         graphics.flush(); RenderSystem.setShaderColor(1, 1, 1, 1);
     }
-
-
-
-
 
     private static void drawShield(GuiGraphics graphics, float opacity) {
         drawShieldRegion(graphics, 0, 16, opacity);

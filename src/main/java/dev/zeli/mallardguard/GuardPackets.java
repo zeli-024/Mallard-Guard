@@ -48,68 +48,6 @@ public final class GuardPackets {
             buf -> new PlayerPalette(buf.readVarInt(), buf.readBoolean() ? readPalette(buf) : null));
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
-    private record CachedPalette(int id, Palette personal, Palette effective) {}
-    // Accessed only on the server thread; never store players, entities or worlds in these entries.
-    private static final java.util.Map<java.util.UUID, CachedPalette> PLAYER_PALETTES = new java.util.HashMap<>();
-    private static int nextPaletteId = 1;
-    private static net.minecraft.server.MinecraftServer paletteServer;
-    private static Palette enforcedPalette;
-
-    public static void playerPalettesJoined(ServerPlayer player) {
-        paletteServer = player.serverLevel().getServer();
-        int id = playerPaletteId(player);
-        for (CachedPalette entry : PLAYER_PALETTES.values())
-            if (entry.id() != id) PacketDistributor.sendToPlayer(player, new PlayerPalette(entry.id(), entry.effective()));
-    }
-    public static int playerPaletteId(ServerPlayer player) {
-        CachedPalette entry = PLAYER_PALETTES.get(player.getUUID());
-        if (entry == null) {
-            paletteServer = player.serverLevel().getServer();
-            Palette personal = Palette.fromPreset(GuardClientPreset.DEFAULTS);
-            entry = new CachedPalette(nextPaletteId++, personal, enforcedPalette == null ? personal : enforcedPalette);
-            PLAYER_PALETTES.put(player.getUUID(), entry);
-            broadcastPalette(new PlayerPalette(entry.id(), entry.effective()));
-        }
-        return entry.id();
-    }
-    private static void receivePalette(SetPalette data, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player) || !data.colors().valid()) return;
-        int id = playerPaletteId(player);
-        CachedPalette previous = PLAYER_PALETTES.get(player.getUUID());
-        Palette effective = enforcedPalette == null ? data.colors() : enforcedPalette;
-        if (data.colors().equals(previous.personal()) && effective.equals(previous.effective())) return;
-        PLAYER_PALETTES.put(player.getUUID(), new CachedPalette(id, data.colors(), effective));
-        if (!effective.equals(previous.effective())) broadcastPalette(new PlayerPalette(id, effective));
-    }
-    private static void broadcastPalette(PlayerPalette data) {
-        if (paletteServer != null) for (ServerPlayer viewer : paletteServer.getPlayerList().getPlayers()) PacketDistributor.sendToPlayer(viewer, data);
-    }
-    private static void enforcePalettes(boolean locked, int[] values) {
-        enforcedPalette = locked ? Palette.fromPreset(values) : null;
-        PLAYER_PALETTES.replaceAll((uuid, previous) -> {
-            Palette effective = enforcedPalette == null ? previous.personal() : enforcedPalette;
-            if (effective.equals(previous.effective())) return previous;
-            broadcastPalette(new PlayerPalette(previous.id(), effective));
-            return new CachedPalette(previous.id(), previous.personal(), effective);
-        });
-    }
-    public static void forgetPlayerPalette(java.util.UUID uuid) {
-        CachedPalette removed = PLAYER_PALETTES.remove(uuid);
-        if (removed != null) broadcastPalette(new PlayerPalette(removed.id(), null));
-    }
-    public static void clearPlayerPalettes() {
-        PLAYER_PALETTES.clear(); paletteServer = null; enforcedPalette = null; nextPaletteId = 1;
-    }
-    /** Config reloads may arrive off-thread; distribute policy and palettes on the server thread. */
-    public static void refreshPalettePolicy() {
-        var server = paletteServer;
-        if (server != null) server.execute(() -> {
-            if (paletteServer != server) return;
-            ClientPolicy policy = clientPolicy();
-            for (ServerPlayer player : server.getPlayerList().getPlayers()) sendConfigData(player, policy);
-        });
-    }
-
     public static final int SAVE_RULES = 1, SAVE_MOBS = 2, SAVE_SHIELD = 4, SAVE_DAMAGE = 8, SAVE_POLICY = 16;
     public record SaveConfig(int request, Save rules, SaveMobs mobs, SaveShield shield,
                              SaveDamageRules damage, SaveClientPolicy policy) implements CustomPacketPayload {
@@ -130,109 +68,20 @@ public final class GuardPackets {
         }
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
-    private static final int SAVE_CHUNK_BYTES=24_000, MAX_SAVE_BYTES=2_097_152;
-    private static final long UPLOAD_TIMEOUT=15_000_000_000L;
     public record SaveChunk(int request,int total,int index,byte[] bytes) implements CustomPacketPayload {
         public static final Type<SaveChunk> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID,"save_chunk"));
         public static final StreamCodec<RegistryFriendlyByteBuf,SaveChunk> CODEC=StreamCodec.of(
             (buf,data)->{buf.writeVarInt(data.request());buf.writeVarInt(data.total());buf.writeVarInt(data.index());buf.writeByteArray(data.bytes());},
-            buf->new SaveChunk(buf.readVarInt(),buf.readVarInt(),buf.readVarInt(),buf.readByteArray(SAVE_CHUNK_BYTES)));
+            buf->new SaveChunk(buf.readVarInt(),buf.readVarInt(),buf.readVarInt(),buf.readByteArray(GuardConfigTransfer.SAVE_CHUNK_BYTES)));
         @Override public Type<? extends CustomPacketPayload> type(){return TYPE;}
     }
-    private static final class Upload {
-        final int request;final byte[][] parts;int next,size;long touched;
-        Upload(SaveChunk first){request=first.request();parts=new byte[first.total()][];touched=System.nanoTime();}
-        boolean append(SaveChunk chunk){
-            if(chunk.request()!=request||chunk.total()!=parts.length||chunk.index()!=next||size+chunk.bytes().length>MAX_SAVE_BYTES)return false;
-            parts[next++]=chunk.bytes();size+=chunk.bytes().length;touched=System.nanoTime();return true;
-        }
-        byte[] complete(){if(next!=parts.length)return null;byte[] data=new byte[size];int offset=0;for(byte[] part:parts){System.arraycopy(part,0,data,offset,part.length);offset+=part.length;}return data;}
-    }
-    private static final java.util.Map<java.util.UUID,Upload> UPLOADS=new java.util.HashMap<>();
-    public static void expireUploads(){if(UPLOADS.isEmpty())return;long now=System.nanoTime();UPLOADS.values().removeIf(upload->now-upload.touched>UPLOAD_TIMEOUT);}
-    public static void forgetUpload(java.util.UUID player){UPLOADS.remove(player);}
-    public static void clearUploads(){UPLOADS.clear();}
-    public static void sendConfig(SaveConfig request,net.minecraft.core.RegistryAccess registries){
-        RegistryFriendlyByteBuf buf=new RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.buffer(),registries);
-        try{
-            SaveConfig.CODEC.encode(buf,request);int size=buf.readableBytes();
-            if(size>MAX_SAVE_BYTES)throw new IllegalArgumentException("Config save is too large.");
-            int total=(size+SAVE_CHUNK_BYTES-1)/SAVE_CHUNK_BYTES;
-            for(int index=0;index<total;index++){byte[] bytes=new byte[Math.min(SAVE_CHUNK_BYTES,buf.readableBytes())];buf.readBytes(bytes);PacketDistributor.sendToServer(new SaveChunk(request.request(),total,index,bytes));}
-        }finally{buf.release();}
-    }
-    private static void saveChunk(SaveChunk chunk,IPayloadContext context){
-        if(!(context.player() instanceof ServerPlayer player))return;
-        if(!player.hasPermissions(2)){PacketDistributor.sendToPlayer(player,new SaveResult(chunk.request(),0,"Only operators can change server settings."));return;}
-        expireUploads();var id=player.getUUID();
-        if(chunk.total()<1||chunk.total()>(MAX_SAVE_BYTES+SAVE_CHUNK_BYTES-1)/SAVE_CHUNK_BYTES||chunk.index()<0||chunk.index()>=chunk.total()||chunk.bytes().length==0||chunk.bytes().length>SAVE_CHUNK_BYTES){UPLOADS.remove(id);return;}
-        if(chunk.index()==0){if(!UPLOADS.containsKey(id)&&UPLOADS.size()>=16){PacketDistributor.sendToPlayer(player,new SaveResult(chunk.request(),0,"Too many config uploads. Try again shortly."));return;}UPLOADS.put(id,new Upload(chunk));}
-        Upload upload=UPLOADS.get(id);
-        if(upload==null||!upload.append(chunk)){UPLOADS.remove(id);PacketDistributor.sendToPlayer(player,new SaveResult(chunk.request(),0,"Config upload was incomplete. Try again."));return;}
-        byte[] data=upload.complete();if(data==null)return;UPLOADS.remove(id);
-        RegistryFriendlyByteBuf buf=new RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.wrappedBuffer(data),player.registryAccess());
-        try{SaveConfig request=SaveConfig.CODEC.decode(buf);if(buf.readableBytes()!=0||request.request()!=chunk.request())throw new IllegalArgumentException("Invalid config upload.");saveConfig(request,context);}
-        catch(RuntimeException error){PacketDistributor.sendToPlayer(player,new SaveResult(chunk.request(),0,"Could not read config upload. Try again."));}
-        finally{buf.release();}
-    }
-    /** Bounded snapshots use the same small transport size in both directions. */
-    private record ConfigSnapshot(Settings rules,MobSettings mobs,ShieldSettings shield,DamageState damage,ClientPolicy policy) {
-        static final StreamCodec<RegistryFriendlyByteBuf,ConfigSnapshot> CODEC=StreamCodec.of(
-            (buf,data)->{writeOptional(buf,Settings.CODEC,data.rules());writeOptional(buf,MobSettings.CODEC,data.mobs());writeOptional(buf,ShieldSettings.CODEC,data.shield());writeOptional(buf,DamageState.CODEC,data.damage());writeOptional(buf,ClientPolicy.CODEC,data.policy());},
-            buf->new ConfigSnapshot(readOptional(buf,Settings.CODEC),readOptional(buf,MobSettings.CODEC),readOptional(buf,ShieldSettings.CODEC),readOptional(buf,DamageState.CODEC),readOptional(buf,ClientPolicy.CODEC)));
-    }
+
     public record SnapshotChunk(int request,int total,int index,byte[] bytes) implements CustomPacketPayload {
         public static final Type<SnapshotChunk> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID,"snapshot_chunk"));
         public static final StreamCodec<RegistryFriendlyByteBuf,SnapshotChunk> CODEC=StreamCodec.of(
             (buf,data)->{buf.writeVarInt(data.request());buf.writeVarInt(data.total());buf.writeVarInt(data.index());buf.writeByteArray(data.bytes());},
-            buf->new SnapshotChunk(buf.readVarInt(),buf.readVarInt(),buf.readVarInt(),buf.readByteArray(SAVE_CHUNK_BYTES)));
+            buf->new SnapshotChunk(buf.readVarInt(),buf.readVarInt(),buf.readVarInt(),buf.readByteArray(GuardConfigTransfer.SAVE_CHUNK_BYTES)));
         @Override public Type<? extends CustomPacketPayload> type(){return TYPE;}
-    }
-    private static int nextSnapshot;
-    private static Upload clientSnapshot;
-    public static void clearClientSnapshot(){clientSnapshot=null;}
-    public static void expireClientSnapshot(){if(clientSnapshot!=null&&System.nanoTime()-clientSnapshot.touched>UPLOAD_TIMEOUT)clearClientSnapshot();}
-    private static void sendSnapshot(ServerPlayer player,ConfigSnapshot snapshot) {
-        RegistryFriendlyByteBuf buf=new RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.buffer(),player.registryAccess());
-        try{
-            ConfigSnapshot.CODEC.encode(buf,snapshot);int size=buf.readableBytes();
-            if(size>MAX_SAVE_BYTES)throw new IllegalArgumentException("Config snapshot is too large.");
-            int total=(size+SAVE_CHUNK_BYTES-1)/SAVE_CHUNK_BYTES,request=++nextSnapshot;
-            for(int index=0;index<total;index++){
-                byte[] bytes=new byte[Math.min(SAVE_CHUNK_BYTES,buf.readableBytes())];buf.readBytes(bytes);
-                PacketDistributor.sendToPlayer(player,new SnapshotChunk(request,total,index,bytes));
-            }
-        }finally{buf.release();}
-    }
-    public static void sendConfigData(ServerPlayer player,CustomPacketPayload payload) {
-        if(payload instanceof Settings data)sendSnapshot(player,new ConfigSnapshot(data,null,null,null,null));
-        else if(payload instanceof MobSettings data)sendSnapshot(player,new ConfigSnapshot(null,data,null,null,null));
-        else if(payload instanceof ShieldSettings data)sendSnapshot(player,new ConfigSnapshot(null,null,data,null,null));
-        else if(payload instanceof DamageState data)sendSnapshot(player,new ConfigSnapshot(null,null,null,data,null));
-        else if(payload instanceof ClientPolicy data)sendSnapshot(player,new ConfigSnapshot(null,null,null,null,data));
-        else throw new IllegalArgumentException("Not a config snapshot payload.");
-    }
-    public static void sendInitialConfig(ServerPlayer player){
-        sendSnapshot(player,new ConfigSnapshot(GuardConfig.snapshot(player.hasPermissions(2)),GuardConfig.mobSnapshot(false),GuardConfig.shieldSnapshot(),null,clientPolicy()));
-    }
-    private static void receiveSnapshot(SnapshotChunk chunk,IPayloadContext context) {
-        expireClientSnapshot();
-        if(chunk.total()<1||chunk.total()>(MAX_SAVE_BYTES+SAVE_CHUNK_BYTES-1)/SAVE_CHUNK_BYTES||chunk.index()<0||chunk.index()>=chunk.total()||chunk.bytes().length==0||chunk.bytes().length>SAVE_CHUNK_BYTES){clearClientSnapshot();return;}
-        SaveChunk part=new SaveChunk(chunk.request(),chunk.total(),chunk.index(),chunk.bytes());
-        if(chunk.index()==0)clientSnapshot=new Upload(part);
-        if(clientSnapshot==null||!clientSnapshot.append(part)){clearClientSnapshot();return;}
-        byte[] bytes=clientSnapshot.complete();if(bytes==null)return;clearClientSnapshot();
-        RegistryFriendlyByteBuf buf=new RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.wrappedBuffer(bytes),context.player().registryAccess());
-        try{
-            ConfigSnapshot snapshot=ConfigSnapshot.CODEC.decode(buf);
-            if(buf.readableBytes()!=0)throw new IllegalArgumentException("Trailing config snapshot data.");
-            if(snapshot.policy()!=null)GuardClient.clientPolicy(snapshot.policy());
-            if(snapshot.mobs()!=null)GuardClient.mobSettings(snapshot.mobs());
-            if(snapshot.rules()!=null)GuardClient.settings(snapshot.rules());
-            if(snapshot.shield()!=null)GuardClient.shieldSettings(snapshot.shield());
-            if(snapshot.damage()!=null)GuardClient.damageState(snapshot.damage());
-        }catch(RuntimeException error){System.err.println("Mallard Guard: could not read config snapshot: "+error.getMessage());}
-        finally{buf.release();}
     }
 
     public record SaveResult(int request, int accepted, String error) implements CustomPacketPayload {
@@ -242,14 +91,15 @@ public final class GuardPackets {
             buf -> new SaveResult(buf.readVarInt(), buf.readVarInt(), buf.readUtf(1024)));
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
-    private static <T> void writeOptional(RegistryFriendlyByteBuf buf, StreamCodec<RegistryFriendlyByteBuf, T> codec, T value) {
+
+    static <T> void writeOptional(RegistryFriendlyByteBuf buf, StreamCodec<RegistryFriendlyByteBuf, T> codec, T value) {
         buf.writeBoolean(value != null);
         if (value != null) codec.encode(buf, value);
     }
-    private static <T> T readOptional(RegistryFriendlyByteBuf buf, StreamCodec<RegistryFriendlyByteBuf, T> codec) {
+    static <T> T readOptional(RegistryFriendlyByteBuf buf, StreamCodec<RegistryFriendlyByteBuf, T> codec) {
         return buf.readBoolean() ? codec.decode(buf) : null;
     }
-    private static void saveConfig(SaveConfig data, IPayloadContext context) {
+    static void saveConfig(SaveConfig data, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player)) return;
         if (!player.hasPermissions(2)) {
             PacketDistributor.sendToPlayer(player, new SaveResult(data.request(), 0, "Only operators can change server settings."));
@@ -388,10 +238,6 @@ public final class GuardPackets {
         public static final StreamCodec<RegistryFriendlyByteBuf, MobCounter> CODEC = StreamCodec.of((b,d) -> { b.writeBoolean(d.perfect()); }, b -> new MobCounter(b.readBoolean()));
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
-
-
-
-
 
     public record FeintEnded() implements CustomPacketPayload {
         public static final Type<FeintEnded> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MallardGuard.ID, "feint_ended"));
@@ -576,10 +422,9 @@ public final class GuardPackets {
         return new Save(data.parry, data.block, data.parryDrowningFire, data.parryStarvation, data.parryGenericKill, data.perfect, data.window, data.recharge, data.angle, data.reductionPercent, data.followUp, data.parryReturnPercent, data.perfectReturnPercent, data.parryWear, data.perfectWear, data.blockWear, data.hitSounds, data.hitParticles, data.masterVolume, data.perfectVolume, data.parryVolume, data.blockVolume, data.fallParry, data.fallPerfectParry, data.fallLookDown, data.fallBreakBlocks, data.fallBlastStrength, data.fallLaunchPower, data.parryExplosions, data.perfectExplosionsOnly, data.blockExplosions, data.parryProjectiles, data.blockProjectiles, data.defenderKnockback, data.knockbackStrength, data.guardMovementPercent, data.blockDeflectChance, data.allowAnyItem, data.allowUsableItems, data.includedItems, data.excludedItems, data.shieldItems, data.consumablePriority, data.parryHealing, data.parryHealingHearts);
     }
 
-
     public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("67");
-        registrar.playToServer(SetPalette.TYPE, SetPalette.CODEC, GuardPackets::receivePalette);
+        PayloadRegistrar registrar = event.registrar("68");
+        registrar.playToServer(SetPalette.TYPE, SetPalette.CODEC, GuardPlayerPalettes::receivePalette);
         registrar.playToClient(PlayerPalette.TYPE, PlayerPalette.CODEC, (data, context) -> GuardClient.playerPalette(data));
         registrar.playToServer(FeintEnded.TYPE, FeintEnded.CODEC, (data, context) -> {
             if (context.player() instanceof ServerPlayer player) GuardState.feinted(player);
@@ -609,13 +454,13 @@ public final class GuardPackets {
         });
         registrar.playToServer(RequestClientPolicy.TYPE, RequestClientPolicy.CODEC, (data, context) -> {
             if (context.player() instanceof ServerPlayer player)
-                sendConfigData(player,clientPolicy());
+                GuardConfigTransfer.sendConfigData(player,clientPolicy());
         });
         registrar.playToClient(MobSettings.TYPE, MobSettings.CODEC, (data, context) -> GuardClient.mobSettings(data));
         registrar.playToClient(GuardPose.TYPE, GuardPose.CODEC, (data, context) -> dev.zeli.mallardguard.client.GuardThirdPerson.pose(data));
         registrar.playToServer(SaveConfig.TYPE, SaveConfig.CODEC, GuardPackets::saveConfig);
-        registrar.playToServer(SaveChunk.TYPE, SaveChunk.CODEC, GuardPackets::saveChunk);
-        registrar.playToClient(SnapshotChunk.TYPE,SnapshotChunk.CODEC,GuardPackets::receiveSnapshot);
+        registrar.playToServer(SaveChunk.TYPE, SaveChunk.CODEC, GuardConfigTransfer::saveChunk);
+        registrar.playToClient(SnapshotChunk.TYPE,SnapshotChunk.CODEC,GuardConfigTransfer::receiveSnapshot);
         registrar.playToClient(SaveResult.TYPE, SaveResult.CODEC, (data, context) -> GuardClient.configSaveResult(data));
         registrar.playToClient(ClientPolicy.TYPE, ClientPolicy.CODEC, (data, context) -> GuardClient.clientPolicy(data));
         registrar.playToClient(Status.TYPE, Status.CODEC, (data, context) -> GuardClient.status(data));
@@ -635,14 +480,14 @@ public final class GuardPackets {
             PacketDistributor.sendToPlayer(player, new ConfigUpdate(String.join("\n", GuardConfig.pendingServerChanges())));
             return;
         }
-        sendSnapshot(player,new ConfigSnapshot(GuardConfig.snapshot(player.hasPermissions(2)),GuardConfig.mobSnapshot(false),GuardConfig.shieldSnapshot(),GuardDamageRules.state(player),clientPolicy()));
+        GuardConfigTransfer.sendSnapshot(player,new GuardConfigTransfer.ConfigSnapshot(GuardConfig.snapshot(player.hasPermissions(2)),GuardConfig.mobSnapshot(false),GuardConfig.shieldSnapshot(),GuardDamageRules.state(player),clientPolicy()));
     }
 
     public static ClientPolicy clientPolicy() {
         int[] saved = GuardClientPreset.parse(GuardConfig.CLIENT_PRESET.get());
         int[] effective = GuardClientPreset.readEnforceTemplate(saved == null ? GuardClientPreset.DEFAULTS : saved);
         GuardRetaliation.enforcedFrames(effective[3]);
-        enforcePalettes(GuardConfig.ENFORCE_CLIENT.get() && (GuardConfig.CLIENT_EXEMPT_MASK.get() & GuardClientPreset.PARTICLES) == 0, effective);
+        GuardPlayerPalettes.enforcePalettes(GuardConfig.ENFORCE_CLIENT.get() && (GuardConfig.CLIENT_EXEMPT_MASK.get() & GuardClientPreset.PARTICLES) == 0, effective);
         return new ClientPolicy(GuardConfig.ENFORCE_CLIENT.get(), GuardConfig.CLIENT_EXEMPT_MASK.get() & GuardClientPreset.ALL_CATEGORIES, GuardClientPreset.encode(effective),GuardPoseLibrary.enforcedAnimations());
     }
 
@@ -667,7 +512,7 @@ public final class GuardPackets {
         GuardConfig.persistServer();
         GuardConfig.afterServerSave(()->{
             ClientPolicy policy=clientPolicy();
-            for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())sendConfigData(connected,policy);
+            for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())GuardConfigTransfer.sendConfigData(connected,policy);
         });
         return true;
     }
@@ -709,7 +554,7 @@ public final class GuardPackets {
     public static void broadcastEligibility(net.minecraft.server.MinecraftServer server) {
         Settings operator = GuardConfig.snapshot(true), visitor = GuardConfig.snapshot(false);
         for (ServerPlayer connected : server.getPlayerList().getPlayers())
-            sendConfigData(connected,connected.hasPermissions(2)?operator:visitor);
+            GuardConfigTransfer.sendConfigData(connected,connected.hasPermissions(2)?operator:visitor);
     }
 
     private static boolean saveDamageRules(SaveDamageRules data, IPayloadContext context) {
@@ -728,8 +573,6 @@ public final class GuardPackets {
         return true;
     }
 
-
-
     private static boolean saveMobs(SaveMobs packet, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player) || !player.hasPermissions(2)) return false;
         MobSettings data = packet.settings();
@@ -743,7 +586,7 @@ public final class GuardPackets {
         GuardConfig.MOB_GEAR_CHANCE.set(data.gearChance());GuardConfig.MOB_GEAR_WHITELIST.set(data.gearWhitelist());GuardConfig.MOB_GEAR_BLACKLIST.set(data.gearBlacklist());
         GuardConfig.MOB_TRACER_START.set(data.tracerStartColor());GuardConfig.MOB_TRACER_MIDDLE.set(data.tracerMiddleColor());GuardConfig.MOB_TRACER_END.set(data.tracerEndColor());
         GuardConfig.persistServer();
-        GuardConfig.afterServerSave(()->{for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())sendConfigData(connected,data);});
+        GuardConfig.afterServerSave(()->{for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())GuardConfigTransfer.sendConfigData(connected,data);});
         return true;
     }
 
@@ -770,7 +613,7 @@ public final class GuardPackets {
         GuardConfig.applyShield(data);
         GuardConfig.afterServerSave(()->{
             ShieldSettings snapshot=GuardConfig.shieldSnapshot();
-            for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())sendConfigData(connected,snapshot);
+            for(ServerPlayer connected:player.serverLevel().getServer().getPlayerList().getPlayers())GuardConfigTransfer.sendConfigData(connected,snapshot);
         });
         return true;
     }

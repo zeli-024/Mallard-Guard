@@ -31,7 +31,7 @@ jobs:
           mod_version="$(sed -n 's/^mod_version=//p' gradle.properties)"
           release_type=release
           case "$mod_version" in
-            *beta*|*[a-z]) release_type=beta ;;
+            *beta*) release_type=beta ;;
           esac
           jar="build/libs/mallardguard-${mod_version}.jar"
           test -f "$jar"

@@ -2,7 +2,7 @@
 
 Flying Sparks, Spark Debris and Spark Tracers share a parry origin, an uneven upward-favored spherical launch distribution and one bounded head budget. Shield Forward Bias optionally favors defender yaw while retaining side/rear directions. Fall parries use a horizontal ring with slight vertical variation instead. Each family retains its own motion, drag, gravity, collisions and rendering.
 
-All three base lifetimes default to 12 ticks. Flying Sparks normally live for 50–100% of that value; 12% sample a longer 110–135% lifetime. This lifetime behavior is unchanged. Flying Size Variance now defaults to 50% while retaining the selected 0.55–1.60 spawn-size range. Base intensity defaults to 5%, perfect adds 50% of that base, damage adds 5% per damage point. Base intensity 0 disables the family. Tracer tails keep their independent 1–4-tick length setting and tick-stepped squares.
+Base lifetimes default to 20 ticks for Flying Sparks, 30 ticks for Spark Debris, and 12 ticks for Spark Tracers. Flying Sparks normally live for 50–100% of that value; 12% sample a longer 110–135% lifetime. This lifetime behavior is unchanged. Flying Size Variance now defaults to 50% while retaining the selected 0.55–1.60 spawn-size range. Base intensity defaults to 5%, perfect adds 50% of that base, damage adds 5% per damage point. Base intensity 0 disables the family. Tracer tails keep their independent 1–4-tick length setting and tick-stepped squares.
 
 Center Impact is a stationary, camera-facing six-frame animation: six 64×64 white artwork PNGs and six matching tint-mask PNGs. Defaults: Size 250%, Spin Speed 45 degrees/second, Opacity 100%, Duration 8 ticks. Starting rotation and spin direction are sampled once per spawn. Drawn expansion and outward dissipation live in the PNG sequence; runtime rotates it and fades its final frame interval without resizing it over time. Mask alpha controls color coverage with no separate tint-strength slider.
 
@@ -10,7 +10,7 @@ All effect geometry shares the existing particle-atlas batch. Active lists are b
 
 Mob tracers and their Center Impact use the server-selected mob Start/Middle/End palette captured with the burst. Player palettes remain local. The palette is captured before the first tick; separate bursts never share mutable color state. Flying Sparks and Spark Debris retain their usual local colors.
 
-Default player tracer/impact palette: #FFEBD7 → #E9B692 → #FFFFFF. Default mob palette: #77433A → #9A342D → #CFCFCF. Flying Sparks and Spark Debris remain white. Chromatic Aberration defaults to 6 ticks.
+Default player tracer/impact palette: #FFEBD7 → #E9B692 → #FFFFFF. Default mob palette: #FFE7E3 → #F20900 → #B9B9B9. Flying Sparks and Spark Debris remain white. Chromatic Aberration defaults to 6 ticks.
 
 ## Multiplayer palettes and effect toggles
 

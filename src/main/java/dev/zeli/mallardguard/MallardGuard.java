@@ -53,7 +53,7 @@ public final class MallardGuard {
         NeoForge.EVENT_BUS.addListener(GuardMobState::leave);
         NeoForge.EVENT_BUS.addListener(GuardMobState::stopping);
         NeoForge.EVENT_BUS.addListener(this::serverStopped);
-        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.tick.ServerTickEvent.Post event)->GuardPackets.expireUploads());
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.tick.ServerTickEvent.Post event)->GuardConfigTransfer.expireUploads());
         NeoForge.EVENT_BUS.addListener(GuardPoses::tracking);
         NeoForge.EVENT_BUS.addListener(GuardState::attacked);
         NeoForge.EVENT_BUS.addListener(GuardState::preventVanillaShieldUse);
@@ -73,7 +73,7 @@ public final class MallardGuard {
     }
 
     private void serverStopped(net.neoforged.neoforge.event.server.ServerStoppedEvent event){
-        GuardPoseLibrary.clearEnforcedCache();GuardState.clearSession();GuardItemRules.clearServerRules();GuardRetaliation.clearSession();GuardDamageRules.clearSession();GuardEffects.clearSession();GuardCombatEffects.clearSession();GuardConfig.serverClosed();GuardPackets.clearUploads();GuardPackets.clearPlayerPalettes();
+        GuardPoseLibrary.clearEnforcedCache();GuardState.clearSession();GuardItemRules.clearServerRules();GuardRetaliation.clearSession();GuardDamageRules.clearSession();GuardEffects.clearSession();GuardCombatEffects.clearSession();GuardConfig.serverClosed();GuardConfigTransfer.clearUploads();GuardPlayerPalettes.clearPlayerPalettes();
     }
 
     private void commands(RegisterCommandsEvent event) {
@@ -89,15 +89,15 @@ public final class MallardGuard {
 
     private void playerJoined(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            GuardPackets.sendInitialConfig(player);
-            GuardPackets.playerPalettesJoined(player);
+            GuardConfigTransfer.sendInitialConfig(player);
+            GuardPlayerPalettes.playerPalettesJoined(player);
         }
     }
 
     private void playerLeft(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            GuardPackets.forgetUpload(player.getUUID());
-            GuardPackets.forgetPlayerPalette(player.getUUID());
+            GuardConfigTransfer.forgetUpload(player.getUUID());
+            GuardPlayerPalettes.forgetPlayerPalette(player.getUUID());
             GuardState.forget(player);
             GuardDamageRules.forget(player);
             GuardEffects.forget(player);

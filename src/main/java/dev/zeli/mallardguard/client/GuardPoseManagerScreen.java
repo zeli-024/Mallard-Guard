@@ -6,7 +6,6 @@ import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
@@ -30,7 +29,7 @@ final class GuardPoseManagerScreen extends Screen {
     private void rebuild(){clearWidgets();init();}
     private void commit(){if(applyDraft())Minecraft.getInstance().setScreen(this);}
     private List<GuardPoseLibrary.Pose> selected(){return draft.poses.stream().filter(p->selectedIds.contains(p.id)).toList();}
-    private Button button(String label,int x,int y,int width,Runnable action,String tip){var b=addRenderableWidget(GuardUi.button(label,x,y,width,20,action));b.setTooltip(Tooltip.create(Component.literal(tip)));return b;}
+    private Button button(String label,int x,int y,int width,Runnable action,String tip){var b=addRenderableWidget(GuardUi.button(label,x,y,width,20,action));b.setTooltip(GuardUi.tooltip(tip));return b;}
     private void motion(List<GuardPoseLibrary.Pose> targets){
         if(targets.isEmpty())return;
         Minecraft.getInstance().setScreen(new GuardPoseMotionScreen(this,targets.getFirst(),value->{for(var p:targets){System.arraycopy(value.values,19,p.values,19,4);p.maintainHeld=value.maintainHeld;}commit();}));
@@ -69,7 +68,7 @@ final class GuardPoseManagerScreen extends Screen {
                     g.drawString(font,font.plainSubstrByWidth(pose.name,getWidth()-(nameX-getX())-9),nameX,getY()+7,pose.enabled?GuardUi.TEXT:0xFF978C9E);
                 }
             });
-            row.setTooltip(Tooltip.create(Component.literal(pose.name+(pose.preset?" · Built-in preset":" · Custom preset"))));
+            row.setTooltip(GuardUi.tooltip(pose.name+(pose.preset?" · Built-in preset":" · Custom preset")));
         }
         var focus=draft.poses.stream().filter(p->p.id.equals(focusedId)).findFirst().orElse(null);
         List<GuardPoseLibrary.Pose> targets=selecting?selected():focus==null?List.of():List.of(focus);
@@ -96,7 +95,7 @@ final class GuardPoseManagerScreen extends Screen {
                 GuardUi.paint(g,this,mx,my,false,false);
                 if(!symbol.isEmpty()&&getWidth()>=80)GuardUi.drawIcon(g,symbol,getX()+4,getY()+(getHeight()-12)/2,this.active?GuardUi.TEXT:0xFF766D7E);
             }
-        });b.active=active;b.setTooltip(Tooltip.create(Component.literal(tip)));
+        });b.active=active;b.setTooltip(GuardUi.tooltip(tip));
     }
     private int maxScroll(){return Math.max(0,draft.poses.size()-rows);}
     private GuardUiLayout.Scrollbar scrollbar(){return new GuardUiLayout.Scrollbar(trackX,listTop,trackHeight,rows,draft.poses.size(),start);}

@@ -51,7 +51,6 @@ public final class GuardCombatEffects {
         if (hearts > 0) defender.heal(result == GuardState.Result.PERFECT ? hearts * 2.0F : hearts);
     }
 
-
     public static boolean isOwnFallBlast(ServerPlayer player, DamageSource source) {
         return FALL_BLASTS.contains(player.getUUID()) && source.is(DamageTypeTags.IS_EXPLOSION);
     }

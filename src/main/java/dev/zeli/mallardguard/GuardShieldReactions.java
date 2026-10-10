@@ -21,7 +21,7 @@ public final class GuardShieldReactions {
         builder.push("shieldReactions");
         for(int r=0;r<NAMES.length;r++){
             builder.push(KEYS[r]);
-            for(int c=0;c<STRIDE;c++){int i=r*STRIDE+c;if(!used(i))continue;SETTINGS[i]=builder.comment(c==5?"Reaction lifetime in ticks. 20 ticks = one second.":"Reaction control. 100% retains the default effect; 0 disables this component.").defineInRange(CONTROLS[c].toLowerCase(java.util.Locale.ROOT),defaultValue(i),c==5?1:0,max(i));}
+            for(int c=0;c<STRIDE;c++){int i=r*STRIDE+c;if(!used(i))continue;SETTINGS[i]=GuardSettingRanges.integer(builder.comment(c==5?"Reaction lifetime in ticks. 20 ticks = one second.":"Reaction control. 100% retains the default effect; 0 disables this component."), CONTROLS[c].toLowerCase(java.util.Locale.ROOT),defaultValue(i),c==5?1:0,max(i));}
             builder.pop();
         }builder.pop();
     }
@@ -32,4 +32,6 @@ public final class GuardShieldReactions {
     public static long millis(int reaction){return SETTINGS[reaction*STRIDE+5].get()*50L;}
     public static void readTemplate(com.electronwill.nightconfig.core.UnmodifiableConfig config,int[] values){for(int i=0;i<SIZE;i++){if(!used(i))continue;Object raw=config.get(key(i));if(raw instanceof Number n&&n.intValue()>=(i%STRIDE==5?1:0)&&n.intValue()<=max(i))values[OFFSET+i]=n.intValue();}}
     public static void writeTemplate(com.electronwill.nightconfig.core.Config config,int[] values){for(int i=0;i<SIZE;i++)if(used(i))config.set(key(i),values[OFFSET+i]);}
+    public static ModConfigSpec.ConfigValue<?> setting(int index) { return SETTINGS[index]; }
+
 }

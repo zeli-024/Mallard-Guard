@@ -14,7 +14,6 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
     private int group,left,top,panelWidth,panelHeight;
     private boolean previewOn=true,previewStarted;
 
-
     private void mirrorGuardHand(){for(int axis=0;axis<3;axis++){pose.values[7+axis]=pose.values[1+axis]*(axis==0?-1:1);pose.values[10+axis]=pose.values[4+axis]*(axis==0?1:-1);}preview();rebuild();}
     private void copyPreset(){
         Minecraft.getInstance().setScreen(new GuardPoseCopyScreen(this,parent.draft.poses,pose.id,source->{
@@ -32,7 +31,7 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
     private static boolean position(int field){return (field-1)%6<3;}
     private static double limit(int field){return position(field)?20:180;}
     private double offset(int field){return pose.values[field]/(position(field)?10.0:1.0);}
-    private Button button(String text,int x,int y,int w,Runnable action,String tip){var b=addRenderableWidget(GuardUi.button(text,x,y,w,20,action));b.setTooltip(Tooltip.create(Component.literal(tip)));b.setHeight(18);return b;}
+    private Button button(String text,int x,int y,int w,Runnable action,String tip){var b=addRenderableWidget(GuardUi.button(text,x,y,w,20,action));b.setTooltip(GuardUi.tooltip(tip));b.setHeight(18);return b;}
     @Override protected void init(){
         panelWidth=Math.min(480,width-16);panelHeight=206;left=(width-panelWidth)/2;top=Math.max(8,(height-panelHeight)/2);
         int inner=panelWidth-16,gap=6,col=(inner-gap)/2,x=left+8,right=x+col+gap;
@@ -42,7 +41,7 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
             var tab=addRenderableWidget(new Button(tx,top+26,tw,20,Component.literal(GROUPS[i]),ignored->{group=n;rebuild();},message->message.get()){
                 @Override public void renderWidget(GuiGraphics g,int mx,int my,float d){GuardUi.paint(g,this,mx,my,n==group,false);}
             });tab.active=n!=group;
-            tab.setTooltip(Tooltip.create(Component.literal("Edit "+GROUPS[i].toLowerCase(Locale.ROOT)+" values.")));
+            tab.setTooltip(GuardUi.tooltip("Edit "+GROUPS[i].toLowerCase(Locale.ROOT)+" values."));
         }
         if(group<3){
             for(int axis=0;axis<3;axis++){
@@ -76,14 +75,10 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
         button("Close",left+panelWidth-8-action,top+180,action,this::onClose,"Close the editor. Unsaved edits require confirmation.");
         if(previewOn&&!previewStarted){PunchyGuardCompat.previewPose(pose.values,pose.maintainHeld);previewStarted=true;}
     }
-    private void motion(String label,int x,int y,int w,int field,int maximum,String tip){var slider=addRenderableWidget(new AbstractSliderButton(x,y,w,20,Component.empty(),pose.values[field]/(double)maximum){
-        {updateMessage();}
-        @Override protected void updateMessage(){setMessage(Component.literal(label+": "+pose.values[field]+(field==22?"%":" ms")));}
-        private void set(int next){if(next!=pose.values[field]){pose.values[field]=next;PunchyGuardCompat.previewMotion(pose.values);}value=next/(double)maximum;}
-        @Override protected void applyValue(){int step=GuardUi.dragStep(0,maximum,1);set(Math.clamp((int)Math.round(value*maximum/step)*step,0,maximum));}
-        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y)||sy==0)return false;set(Math.clamp(pose.values[field]+(int)Math.signum(sy)*(hasShiftDown()?10:1),0,maximum));updateMessage();return true;}
-        @Override public void renderWidget(GuiGraphics g,int mx,int my,float d){GuardUi.slider(g,this,value,pose.values[field]!=saved.values[field]);}
-    });slider.setHeight(18);slider.active=parent.editable;slider.setTooltip(Tooltip.create(Component.literal(tip)));}
+    private void motion(String label,int x,int y,int w,int field,int maximum,String tip){var slider=addRenderableWidget(new GuardSlider(x,y,w,20,pose.values[field],0,maximum,
+        GuardUi.dragStep(0,maximum,1), value -> label+": "+value+(field==22?"%":" ms"), value -> {
+            if(value!=pose.values[field]){pose.values[field]=value;PunchyGuardCompat.previewMotion(pose.values);}
+        }, () -> pose.values[field]!=saved.values[field]));slider.active=parent.editable;slider.setTooltip(GuardUi.tooltip(tip));}
 
     private void save(){Minecraft.getInstance().setScreen(new GuardPoseNameScreen(this,pose.name,parent.draft.poses,name->{pose.name=name;commitSave();}));}
     private void commitSave(){int existing=-1;for(int i=0;i<parent.draft.poses.size();i++)if(parent.draft.poses.get(i).id.equals(pose.id)){existing=i;break;}if(existing<0)parent.draft.poses.add(pose.copy());else parent.draft.poses.set(existing,pose.copy());if(parent.applyDraft()){saved=pose.copy();Minecraft.getInstance().setScreen(parent);}}
@@ -101,13 +96,13 @@ final class GuardPoseEditorScreen extends GuardPreviewScreen {
     @Override public void onClose(){if(changed())GuardUi.choices(this,"Unsaved preset","Save or discard these changes.",new GuardUi.Choice("Save",this::save),new GuardUi.Choice("Discard",()->Minecraft.getInstance().setScreen(parent)),new GuardUi.Choice("Go Back",()->Minecraft.getInstance().setScreen(this)));else Minecraft.getInstance().setScreen(parent);}
     private final class PoseSlider extends AbstractSliderButton {
         final int field;boolean typing;String text="";
-        PoseSlider(int x,int y,int w,int field){super(x,y,w,20,net.minecraft.network.chat.Component.empty(),Math.clamp((offset(field)+limit(field))/(2*limit(field)),0,1));this.field=field;updateMessage();setTooltip(Tooltip.create(net.minecraft.network.chat.Component.literal(AXES[(field-1)%6]+" from the resting hand position. Drag, scroll, or type a value. Zero leaves that axis unchanged. Range: "+(position(field)?"-20 to 20 model pixels":"-180 to 180 degrees")+".")));}
+        PoseSlider(int x,int y,int w,int field){super(x,y,w,20,net.minecraft.network.chat.Component.empty(),Math.clamp((offset(field)+limit(field))/(2*limit(field)),0,1));this.field=field;updateMessage();setTooltip(GuardUi.tooltip(AXES[(field-1)%6]+" from the resting hand position. Drag, scroll, or type a value. Zero leaves that axis unchanged. Range: "+(position(field)?"-20 to 20 model pixels":"-180 to 180 degrees")+"."));}
         @Override public void onClick(double x,double y){typing=false;super.onClick(x,y);}
         @Override public boolean mouseClicked(double x,double y,int b){if(active&&visible&&isMouseOver(x,y)&&b==1){typing=true;text="";setFocused(true);return true;}return super.mouseClicked(x,y,b);}
         @Override public boolean charTyped(char c,int modifiers){if(!active||!isFocused()||!(Character.isDigit(c)||c=='-'||c=='.'))return false;if(!typing){typing=true;text="";}if(text.length()<8)text+=c;parse();return true;}
         @Override public boolean keyPressed(int key,int scan,int mods){if(typing&&key==GLFW.GLFW_KEY_BACKSPACE){if(!text.isEmpty())text=text.substring(0,text.length()-1);parse();return true;}if(typing&&(key==GLFW.GLFW_KEY_ENTER||key==GLFW.GLFW_KEY_KP_ENTER)){parse();typing=false;return true;}if(!typing&&(key==GLFW.GLFW_KEY_LEFT||key==GLFW.GLFW_KEY_RIGHT)){boolean handled=super.keyPressed(key,scan,mods);return handled;}return super.keyPressed(key,scan,mods);}
         private void parse(){try{double n=Double.parseDouble(text);if(Double.isFinite(n)&&n>=-limit(field)&&n<=limit(field)){value=(n+limit(field))/(2*limit(field));applyValue();updateMessage();}}catch(NumberFormatException ignored){}}
-        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y))return false;value=Math.clamp(value+Math.signum(sy)*(position(field)?.1:1)*(hasShiftDown()?10:1)/(2*limit(field)),0,1);applyValue();updateMessage();return true;}
+        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y))return false;value=Math.clamp(value+Math.signum(sy)*(position(field)?.1:1)*(GuardUi.preciseStep())/(2*limit(field)),0,1);applyValue();updateMessage();return true;}
         @Override protected void updateMessage(){setMessage(net.minecraft.network.chat.Component.literal((position(field)?"Move ":"Rot ")+"XYZ".charAt((field-1)%3)+": "+(offset(field)==(int)offset(field)?Integer.toString((int)offset(field)):String.format(Locale.ROOT,"%.1f",offset(field)))));}
         @Override protected void applyValue(){double n=value*(2*limit(field))-limit(field);int scale=position(field)?10:1;int next=Math.clamp((int)Math.round(n*scale),GuardPoseSettings.min(field),GuardPoseSettings.max(field));if(next!=pose.values[field]){valueChanged();pose.values[field]=next;preview();}}
         @Override public void renderWidget(GuiGraphics g,int x,int y,float d){

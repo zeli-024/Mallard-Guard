@@ -16,4 +16,4 @@ The PNG mask alpha controls tint selection; Opacity scales the complete effect.
 Size, Spin Speed, Opacity and Duration are the only impact controls.
 Starting rotation and spin direction are randomized once per appearance. Duration is both animation time and lifetime.
 
-Impact artwork was generated with the built-in image tool, then registered, sampled and alpha-encoded offline. `preview.gif` shows the six sharp white drawings without runtime randomized spin.
+`preview.gif` shows the six drawings without runtime randomized spin.

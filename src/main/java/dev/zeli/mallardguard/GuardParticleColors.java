@@ -33,7 +33,7 @@ public final class GuardParticleColors {
     };
     public static final String[] LABELS=new String[KEYS.length];
     private static final int[] DEFAULTS={
-        0xFFFFFF,0,100,50,0xFFFFFF,120,TRACER_START,TRACER_MIDDLE,TRACER_END,150,2,250,8,100,0,0,0,0,0,0,0,0,0,0,0,45,0,0,0,0,0,0,0,0,0,0,0,0,12,12,12,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,1,1,1
+        0xFFFFFF,0,100,50,0xFFFFFF,120,TRACER_START,TRACER_MIDDLE,TRACER_END,150,2,250,8,100,0,0,0,0,0,0,0,0,0,0,0,45,0,0,0,0,0,0,0,0,0,0,0,0,20,30,12,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,1,1,1
     };
     private static final ModConfigSpec.IntValue[] VALUES=new ModConfigSpec.IntValue[DEFAULTS.length];
     public static ModConfigSpec.IntValue FLYING_COLOR;
@@ -76,9 +76,8 @@ public final class GuardParticleColors {
         if(i==FLYING_SIZE_VARIANCE)return "Random size per spark. Higher values widen the range.\n0% uses one size. Default: 50%.";
         return "Visual size; physics stay the same. 0% disables this particle.\n100% is the original size. Default: "+DEFAULTS[i-OFFSET]+"%.";
     }
-    public static void define(ModConfigSpec.Builder b){for(int k=0;k<VALUES.length;k++){int i=OFFSET+k;if(!retired(i))VALUES[k]=b.comment(tip(i)).defineInRange(KEYS[k],DEFAULTS[k],min(i),max(i));}FLYING_COLOR=VALUES[0];}
+    public static void define(ModConfigSpec.Builder b){for(int k=0;k<VALUES.length;k++){int i=OFFSET+k;if(!retired(i))VALUES[k]=GuardSettingRanges.integer(b.comment(tip(i)), KEYS[k],DEFAULTS[k],min(i),max(i));}FLYING_COLOR=VALUES[0];}
     public static int get(int i){return retired(i)?0:VALUES[i-OFFSET].get();}
-    public static int indexOfLabel(String label){for(int i=OFFSET;i<LENGTH;i++)if(!retired(i)&&LABELS[i-OFFSET].equals(label))return i;return -1;}
     public static int indexOf(net.neoforged.neoforge.common.ModConfigSpec.ConfigValue<?> value){for(int k=0;k<VALUES.length;k++)if(VALUES[k]!=null&&VALUES[k]==value)return OFFSET+k;return -1;}
     public static ModConfigSpec.IntValue setting(int index){return VALUES[index-OFFSET];}
     public static String key(int i){return KEYS[i-OFFSET];}

@@ -25,6 +25,13 @@ final class GuardUi {
         int color=dragging||bar.contains(mouseX,mouseY)?HIGHLIGHT:WARM;
         g.fill(bar.x()+1,bar.thumbY(),bar.x()+GuardUiLayout.SCROLL_WIDTH-1,bar.thumbY()+bar.thumbHeight(),color);
     }
+    static String tooltipLines(String description) {
+        return description.strip().replaceAll("(?<=[.!?]) +(?=[A-Z0-9])", "\n");
+    }
+    static net.minecraft.client.gui.components.Tooltip tooltip(String description) {
+        return net.minecraft.client.gui.components.Tooltip.create(Component.literal(tooltipLines(description)));
+    }
+    static int preciseStep() { return Screen.hasShiftDown() ? 10 : 1; }
     static int dragStep(int min,int max,int divisor){return divisor==1 && (long)max-min>200?10:1;}
     static void slider(GuiGraphics g,net.minecraft.client.gui.components.AbstractSliderButton widget,double value,boolean changed){
         int x=widget.getX(),y=widget.getY(),w=widget.getWidth(),h=widget.getHeight();
@@ -193,9 +200,7 @@ final class GuardUi {
     static void confirm(Screen parent,String title,String message,Runnable yes) {
         choices(parent,title,message,new Choice(title.startsWith("Reset")?"Reset":"Confirm",()->{yes.run();Minecraft.getInstance().setScreen(parent);}),new Choice("Go Back",()->Minecraft.getInstance().setScreen(parent)));
     }
-    static void apply(Screen screen,Runnable stay,Runnable close) {
-        close.run();
-    }
+
     private static final class Dialog extends Screen {
         final Screen parent;final String message;final List<Choice> choices;int left,top,w,panelHeight,buttonTop;
         private List<net.minecraft.util.FormattedCharSequence> messageLines=List.of();

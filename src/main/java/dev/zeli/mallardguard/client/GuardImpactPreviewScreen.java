@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -25,8 +24,6 @@ final class GuardImpactPreviewScreen extends GuardPreviewScreen {
     private boolean shaderAvailable = true;
 
     private int[] saved;
-
-
 
     private void apply(boolean close){accept.accept(values.clone());if(parent instanceof GuardConfigScreen config&&!config.applyExternalChanges())return;saved=values.clone();Minecraft.getInstance().setScreen(close?parent:this);}
     private boolean mob;
@@ -60,16 +57,17 @@ final class GuardImpactPreviewScreen extends GuardPreviewScreen {
         for (int i = 0; i < NAMES.length; i++) {
             final int index = i;
             int source = mob && values[56] != 0 ? i == 4 ? 50 : 40 + i : slot(i);
-            ImpactSlider slider = addRenderableWidget(new ImpactSlider(left + labelWidth, top + 65 + i * rowGap,
-                panelWidth - labelWidth - 8, Math.min(20, rowGap - 2), values[source], v -> values[slot(index)] = v));
+            GuardSlider slider = addRenderableWidget(new GuardSlider(left + labelWidth, top + 65 + i * rowGap,
+                panelWidth - labelWidth - 8, Math.min(20, rowGap - 2), values[source], 0, 400, 10,
+                v -> v+"%", v -> { valueChanged(); values[slot(index)] = v; }, () -> false));
             slider.active = editable && (!mob || values[56] == 0);
-            slider.setTooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(
+            slider.setTooltip(GuardUi.tooltip(
                 NAMES[i] + ": 0–400%. Default: " + dev.zeli.mallardguard.GuardClientPreset.DEFAULTS[slot(i)] + "%."
-                + (mob ? " Adapt follows your parry settings; turn it off for independent sliders. Invert is independent." : " Changes are saved by Apply on the main config screen."))));
+                + (mob ? " Adapt follows your parry settings; turn it off for independent sliders. Invert is independent." : " Changes are saved by Apply on the main config screen.")));
         }
         int bw=(panelWidth-24)/3;
         Button reset=addRenderableWidget(GuardUi.button("Reset",left+6,top+panelHeight-25,bw,20,()->GuardUi.confirm(this,"Reset impact values?","Restore both impact screens to their defaults.",()->{for(int i=40;i<=43;i++)values[i]=dev.zeli.mallardguard.GuardClientPreset.DEFAULTS[i];for(int i=50;i<=57;i++)values[i]=dev.zeli.mallardguard.GuardClientPreset.DEFAULTS[i];})));reset.active=editable;buttons.add(reset);
-        Button apply=addRenderableWidget(GuardUi.button("Apply",left+12+bw,top+panelHeight-25,bw,20,()->GuardUi.apply(this,()->apply(false),()->apply(true))));apply.active=editable;buttons.add(apply);
+        Button apply=addRenderableWidget(GuardUi.button("Apply",left+12+bw,top+panelHeight-25,bw,20,()->apply(true)));apply.active=editable;buttons.add(apply);
         buttons.add(addRenderableWidget(GuardUi.button("Close",left+18+2*bw,top+panelHeight-25,bw,20,this::onClose)));
         visibilityButton();buttons.add(visibility);
     }
@@ -126,27 +124,4 @@ final class GuardImpactPreviewScreen extends GuardPreviewScreen {
 
     @Override public void onClose() {if(!java.util.Arrays.equals(values,saved))GuardUi.choices(this,"Unsaved impact changes","Apply these values or discard edits.",new GuardUi.Choice("Apply & Close",()->apply(true)),new GuardUi.Choice("Discard",()->Minecraft.getInstance().setScreen(parent)),new GuardUi.Choice("Go Back",()->Minecraft.getInstance().setScreen(this)));else Minecraft.getInstance().setScreen(parent);}
 
-
-    private final class ImpactSlider extends AbstractSliderButton {
-        private final Consumer<Integer> change;
-
-        ImpactSlider(int x, int y, int width, int height, int current, Consumer<Integer> change) {
-            super(x, y, width, height, Component.empty(), current / 400.0D);
-            this.change = change;
-            updateMessage();
-        }
-
-        @Override public boolean mouseScrolled(double x,double y,double sx,double sy){if(!active||!isMouseOver(x,y)||sy==0)return false;value=Math.clamp(value+Math.signum(sy)*(hasShiftDown()?10:1)/400.0D,0,1);valueChanged();change.accept((int)Math.round(value*400));updateMessage();return true;}
-        @Override protected void updateMessage() {
-            setMessage(Component.literal(Math.round(value * 400) + "%"));
-        }
-
-        @Override protected void applyValue() {
-            value=Math.round(value*40)/40.0D;valueChanged();change.accept((int) Math.round(value * 400));
-        }
-
-        @Override public void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-            GuardUi.slider(graphics,this,value,false);
-        }
-    }
 }

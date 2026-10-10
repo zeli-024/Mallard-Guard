@@ -21,7 +21,9 @@ done
 rm -f -- art-source/original-impact-reference.png art-source/approved-cross-impact-reference.png
 rm -f -- art-source/ImpactLayerExport.java art-source/ring-impact.png art-source/cross-impact.png
 rm -f -- art-source/cross-generated-reference.png art-source/ring-generated-reference.png
-rm -f -- art-source/cross-generation-prompt.txt art-source/generation-prompts.md
+if [[ -d art-source ]]; then
+    find art-source -maxdepth 1 -type f -name '*prompt*' -delete
+fi
 rm -f -- release-notes/1.54c-beta-11-draft.md
 
 # Retired mob blocking and regular-window config keys.

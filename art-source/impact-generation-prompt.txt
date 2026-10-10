@@ -1,1 +1,0 @@
-Approved two-cross opening; center clears into thin concentric arcs, upper-right side lingers. Six 64px frames, shared origin, no glow, no third cross. Nearest-neighbor registration and discrete source-alpha preparation.

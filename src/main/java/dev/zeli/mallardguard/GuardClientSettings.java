@@ -137,4 +137,6 @@ public final class GuardClientSettings {
         }
         if (category == GuardClientPreset.SCREEN) GuardConfig.SCREEN_SHAKE.set(values[5] > 0);
     }
+    public static ModConfigSpec.ConfigValue<?> setting(int index) { return SLOTS[index].value().get(); }
+
 }

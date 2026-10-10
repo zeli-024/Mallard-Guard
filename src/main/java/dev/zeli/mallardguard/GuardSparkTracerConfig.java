@@ -56,7 +56,7 @@ public final class GuardSparkTracerConfig {
     private GuardSparkTracerConfig() {}
     public static boolean retired(int index) {return slot(index)&&index!=OFFSET+BASEINTENSITY&&index!=OFFSET+PERFECTINTENSITY&&index!=OFFSET+DAMAGESCALING;}
     public static void define(ModConfigSpec.Builder builder) {
-        for(int i:DISPLAY_ORDER)VALUES[i]=builder.comment(TIPS[i]).defineInRange(key(OFFSET+i),DEFAULTS[i],0,100);
+        for(int i:DISPLAY_ORDER)VALUES[i]=GuardSettingRanges.integer(builder.comment(TIPS[i]), key(OFFSET+i),DEFAULTS[i],0,100);
     }
     public static int get(int local) {return local==BASEINTENSITY||local==PERFECTINTENSITY||local==DAMAGESCALING?VALUES[local].get():BASELINES[local];}
     public static boolean slot(int index) {return index>=OFFSET&&index<OFFSET+DEFAULTS.length;}
@@ -98,4 +98,11 @@ public final class GuardSparkTracerConfig {
         config.remove("particles.shootingSparks");
         for(int i:DISPLAY_ORDER)config.set(key(OFFSET+i),values[OFFSET+i]);
     }
+    public static ModConfigSpec.ConfigValue<?> setting(int index) { return VALUES[index - OFFSET]; }
+
+    public static int indexOf(ModConfigSpec.ConfigValue<?> setting) {
+        for (int i : DISPLAY_ORDER) if (VALUES[i] == setting) return OFFSET + i;
+        return -1;
+    }
+
 }
